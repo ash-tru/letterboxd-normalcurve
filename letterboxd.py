@@ -20,9 +20,15 @@ from typing import Any, Callable
 
 import lxml.html
 
+try:
+    from curl_cffi import requests as cffi_requests
+except ImportError:
+    cffi_requests = None  # type: ignore[assignment]
+
 MAX_FILMS_LIMIT = 10000
 MAX_PAGES_LIMIT = 139  # 139 * 72 = 10,008 films
 _THREAD_LOCAL = threading.local()
+IMPERSONATE_PROFILES = ["chrome", "chrome124", "safari17_0", "firefox133"]
 
 STAR_BUCKETS: list[float] = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0]
 
@@ -548,17 +554,64 @@ def _get_thread_opener() -> tuple[http.cookiejar.CookieJar, urllib.request.Opene
     return _THREAD_LOCAL.cj, _THREAD_LOCAL.opener
 
 
+def _get_cffi_session(profile: str = "chrome") -> Any:
+    """Return a reusable per-thread curl_cffi Session impersonating a real browser TLS stack."""
+    if not hasattr(_THREAD_LOCAL, "cffi_sessions"):
+        _THREAD_LOCAL.cffi_sessions = {}
+    sessions: dict[str, Any] = _THREAD_LOCAL.cffi_sessions
+    if profile not in sessions:
+        sessions[profile] = cffi_requests.Session(impersonate=profile)
+    return sessions[profile]
+
+
+def _reset_cffi_session(profile: str) -> None:
+    if hasattr(_THREAD_LOCAL, "cffi_sessions"):
+        _THREAD_LOCAL.cffi_sessions.pop(profile, None)
+
+
 def _fetch_url_with_retry(
     url: str,
     base_url: str,
-    max_retries: int = 5,
-    timeout: float = 12.0,
+    max_retries: int = 6,
+    timeout: float = 15.0,
 ) -> str:
-    """Fetch a Letterboxd page with thread-reused CSRF cookie priming and retry on 403/5xx."""
+    """Fetch a Letterboxd page using Chrome TLS/HTTP2 impersonation (curl_cffi) with retry."""
+    if cffi_requests is not None:
+        last_err: Exception | None = None
+        for attempt in range(max_retries):
+            profile = IMPERSONATE_PROFILES[attempt % len(IMPERSONATE_PROFILES)]
+            session = _get_cffi_session(profile)
+            headers = {
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Referer": base_url,
+            }
+            try:
+                if url != base_url and not session.cookies:
+                    session.get(base_url, headers=headers, timeout=timeout)
+                resp = session.get(url, headers=headers, timeout=timeout)
+                if resp.status_code == 404:
+                    raise ValueError(
+                        "Letterboxd user not found (404). Check the username and ensure the profile is public."
+                    )
+                if resp.status_code == 200:
+                    return resp.text
+                last_err = RuntimeError(f"HTTP Error {resp.status_code}")
+                _reset_cffi_session(profile)
+                time.sleep(0.25 * (attempt + 1))
+            except ValueError:
+                raise
+            except Exception as exc:
+                last_err = exc
+                _reset_cffi_session(profile)
+                time.sleep(0.25 * (attempt + 1))
+        raise RuntimeError(f"Failed to fetch {url} after {max_retries} attempts: {last_err}")
+
+    # Fallback if curl_cffi is unavailable
     cj, opener = _get_thread_opener()
     headers = {**DEFAULT_HEADERS, "Referer": base_url}
 
-    last_err: Exception | None = None
+    last_err_urllib: Exception | None = None
     for attempt in range(max_retries):
         try:
             if url != base_url and len(cj) == 0:
@@ -569,22 +622,22 @@ def _fetch_url_with_retry(
             with opener.open(req, timeout=timeout) as resp:
                 return resp.read().decode("utf-8", errors="replace")
         except urllib.error.HTTPError as exc:
-            last_err = exc
+            last_err_urllib = exc
             if exc.code == 404:
                 raise ValueError(
                     "Letterboxd user not found (404). Check the username and ensure the profile is public."
                 ) from exc
             if exc.code in (403, 429, 500, 502, 503, 504):
                 cj.clear()
-                time.sleep(0.15 * (attempt + 1))
+                time.sleep(0.25 * (attempt + 1))
                 continue
             raise
         except Exception as exc:
-            last_err = exc
+            last_err_urllib = exc
             cj.clear()
-            time.sleep(0.15 * (attempt + 1))
+            time.sleep(0.25 * (attempt + 1))
 
-    raise RuntimeError(f"Failed to fetch {url} after {max_retries} attempts: {last_err}")
+    raise RuntimeError(f"Failed to fetch {url} after {max_retries} attempts: {last_err_urllib}")
 
 
 def fetch_user_watched_films(
@@ -619,7 +672,7 @@ def fetch_user_watched_films(
             films, _ = parse_films_page_html(html, start_order=(page_num - 1) * 72 + 1)
             return page_num, films
 
-        with ThreadPoolExecutor(max_workers=6) as pool:
+        with ThreadPoolExecutor(max_workers=3) as pool:
             futures = {
                 pool.submit(_fetch_single_page, p): p
                 for p in range(2, total_pages + 1)
