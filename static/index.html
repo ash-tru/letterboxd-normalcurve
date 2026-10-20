@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LTRBX // Bell-Curve Ranker</title>
+  <link rel="stylesheet" href="/styles.css?v=11" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="brand-dots" aria-hidden="true">
+          <span class="dot dot-orange"></span>
+          <span class="dot dot-green"></span>
+          <span class="dot dot-blue"></span>
+        </div>
+        <h1 class="brand-title">LTRBX</h1>
+      </div>
+
+      <!-- Persistent Profile Lookup Form (Always visible in both modes) -->
+      <form id="lookupForm" class="lookup-form">
+        <div class="input-with-prefix">
+          <span class="input-prefix">letterboxd.com/</span>
+          <input
+            type="text"
+            id="usernameInput"
+            placeholder="username"
+            autocomplete="off"
+            required
+          />
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm" id="lookupBtn">Load Profile</button>
+        <button type="button" class="btn btn-secondary btn-sm hidden" id="refreshBtn" title="Re-sync profile from Letterboxd">
+          &#x21bb;
+        </button>
+        <label class="btn btn-ghost btn-sm file-upload-label" title="Import CSV">
+          CSV
+          <input type="file" id="csvFileInput" accept=".csv" hidden />
+        </label>
+      </form>
+
+      <!-- Primary App Mode Switcher: Add Movie (Default) vs Full List Mode -->
+      <div class="segmented" id="appModeSwitcher">
+        <button type="button" class="seg-btn active" data-appmode="add">
+          + Add Movie
+        </button>
+        <button type="button" class="seg-btn" data-appmode="full">
+          &#x2630; Full List Mode
+        </button>
+      </div>
+
+      <div class="topbar-right">
+        <div class="profile-badge hidden" id="activeProfileBadge">
+          <img id="profileAvatar" class="profile-avatar hidden" alt="" />
+          <div class="profile-meta">
+            <a id="profileNameLink" href="#" target="_blank" rel="noopener noreferrer" class="profile-name"></a>
+            <span id="profileFilmCounts" class="profile-counts"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- Compact Status & Saved Sessions Bar -->
+    <div class="status-strip">
+      <div id="savedSessionsBar" class="saved-sessions hidden">
+        <span class="saved-label">Saved:</span>
+        <div id="savedSessionsList" class="saved-chips"></div>
+      </div>
+
+      <div id="globalOptionsBar" class="global-options hidden">
+        <label class="toggle-switch">
+          <input type="checkbox" id="includeUnratedToggle" checked />
+          <span>Include unrated</span>
+        </label>
+        <select id="maxPagesSelect" title="Max films to fetch from Letterboxd">
+          <option value="139">All Films (up to 10,000)</option>
+          <option value="28">Up to 2,000 Films</option>
+          <option value="10">Up to 720 Films</option>
+          <option value="5">Up to 360 Films</option>
+          <option value="1">1 Page (72)</option>
+        </select>
+        <span id="saveStatusIndicator" class="save-indicator">Saved in Browser</span>
+      </div>
+    </div>
+
+    <div id="progressArea" class="progress-area hidden">
+      <div class="progress-header">
+        <span id="progressText">Loading...</span>
+        <span id="progressCount">0%</span>
+      </div>
+      <div class="progress-track">
+        <div id="progressFill" class="progress-fill" style="width: 5%"></div>
+      </div>
+    </div>
+
+    <div id="errorBanner" class="alert alert-error hidden"></div>
+
+    <!-- ================================================================== -->
+    <!-- DEFAULT MODE: ADD MOVIE (BINARY SEARCH A vs B -> BELL CURVE RATE)  -->
+    <!-- ================================================================== -->
+    <section id="addMovieModeSection">
+      <!-- Add Movie Entry Card -->
+      <div class="card add-entry-card">
+        <form id="addMovieForm" class="add-movie-form">
+          <div class="add-field add-field-movie">
+            <label for="newMovieInput">Movie to Rate &amp; Add to Bell Curve</label>
+            <input
+              type="text"
+              id="newMovieInput"
+              class="movie-text-input"
+              placeholder="e.g. Mickey 17, Anora (2024), or Letterboxd film URL..."
+              autocomplete="off"
+              required
+            />
+          </div>
+
+          <div class="add-field-actions">
+            <button type="submit" class="btn btn-primary" id="startAddMovieBtn">
+              Rank Movie (A vs B) &rarr;
+            </button>
+          </div>
+        </form>
+
+        <!-- Candidate film picker if search returns multiple matches -->
+        <div id="filmSearchCandidates" class="candidate-strip hidden"></div>
+
+        <!-- Pre-Flight Profile Bell-Curve Check Banner -->
+        <div id="profileHealthBanner" class="profile-health-banner hidden"></div>
+      </div>
+
+      <!-- Binary Search Arena for the New Movie -->
+      <div id="addMovieBattleCard" class="card battle-card hidden">
+        <div class="battle-controls-top">
+          <div class="battle-scope-group">
+            <span class="badge badge-orange" id="addBinaryStepBadge">Step 1</span>
+            <span class="badge badge-blue" id="addBinaryRangeBadge">#1 – #N</span>
+            <span class="muted-meta" id="addBinaryEstRemaining"></span>
+          </div>
+          <div class="battle-stats">
+            <button type="button" class="btn btn-ghost btn-sm" id="addBinaryUndoBtn" disabled>
+              &#x21B6; Undo
+            </button>
+            <button type="button" class="btn btn-ghost btn-sm" id="addBinaryRestartBtn">
+              &#x21BB; Restart
+            </button>
+          </div>
+        </div>
+
+        <div class="progress-track tournament-progress-track">
+          <div id="addBinaryProgressFill" class="progress-fill" style="width: 5%"></div>
+        </div>
+
+        <h3 class="battle-prompt" id="addBattlePromptTitle">Which movie do you rank higher?</h3>
+
+        <div class="battle-arena">
+          <button type="button" class="battle-contender" id="addBattleLeftBtn">
+            <div class="contender-seed-badge" id="addBattleLeftSeed">New Movie</div>
+            <div class="contender-poster-wrap" id="addBattleLeftPoster"></div>
+            <div class="contender-info">
+              <span class="contender-rank" id="addBattleLeftRank"></span>
+              <h4 class="contender-title" id="addBattleLeftTitle"></h4>
+              <span class="contender-stars" id="addBattleLeftStars"></span>
+            </div>
+            <span class="choose-pill">&larr; Prefer New Movie</span>
+          </button>
+
+          <div class="battle-vs-col">
+            <div class="battle-vs">VS</div>
+          </div>
+
+          <button type="button" class="battle-contender" id="addBattleRightBtn">
+            <div class="contender-seed-badge" id="addBattleRightSeed">Benchmark</div>
+            <div class="contender-poster-wrap" id="addBattleRightPoster"></div>
+            <div class="contender-info">
+              <span class="contender-rank" id="addBattleRightRank"></span>
+              <h4 class="contender-title" id="addBattleRightTitle"></h4>
+              <span class="contender-stars" id="addBattleRightStars"></span>
+            </div>
+            <span class="choose-pill">Prefer Benchmark &rarr;</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Result Card: What to Rate the Movie + What Movies Need Adjustment -->
+      <div id="addMovieResultCard" class="card add-result-card hidden">
+        <div class="add-result-verdict" id="addResultVerdict"></div>
+
+        <div class="add-adjustments-section">
+          <div class="adjustments-header">
+            <h4 id="adjustmentsHeading">Movies to Adjust to Keep Your Bell Curve</h4>
+            <label class="toggle-switch" id="showAllPreexistingWrap">
+              <input type="checkbox" id="showAllPreexistingToggle" />
+              <span>Include pre-existing profile mismatches</span>
+            </label>
+          </div>
+          <div id="addAdjustmentsList"></div>
+        </div>
+
+        <div class="add-result-actions">
+          <button type="button" class="btn btn-secondary" id="rateAnotherMovieBtn">
+            + Rate Another Movie
+          </button>
+          <button type="button" class="btn btn-primary" id="switchToFullListFromResultBtn">
+            &#x2630; Open Full List Mode &rarr;
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Empty State when in Full List Mode before a user is loaded -->
+    <section id="emptyState" class="empty-state hidden">
+      <p>Enter your Letterboxd username in the top bar (or click a saved profile chip above) to load your full list.</p>
+    </section>
+
+    <!-- ================================================================== -->
+    <!-- FULL LIST MODE: SORT MOVIES + BELL CURVE TABLE                     -->
+    <!-- ================================================================== -->
+    <div id="workspace" class="hidden">
+      <!-- Minimalist 2-View Bar -->
+      <div class="workspace-nav">
+        <div class="segmented">
+          <button type="button" class="seg-btn active" data-step="step2">
+            1. Sort Movies
+          </button>
+          <button type="button" class="seg-btn" data-step="step3">
+            2. Bell Curve Table
+          </button>
+        </div>
+
+        <div class="workspace-actions">
+          <span id="step2SummaryMeta" class="muted-meta"></span>
+          <button type="button" class="btn btn-ghost btn-sm" id="resetOrderBtn" title="Reset manual order back to Letterboxd rating sort">
+            Reset Order
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" id="exportCsvBtn">
+            &#x2B73; Export CSV
+          </button>
+        </div>
+      </div>
+
+      <!-- ================================================================ -->
+      <!-- VIEW 1: MANUAL SORT (LIST + SINGLE-FILM BINARY SEARCH)           -->
+      <!-- ================================================================ -->
+      <section id="step2Panel" class="step-panel">
+        <div class="toolbar">
+          <div class="segmented">
+            <button type="button" class="seg-btn active" data-sortmode="list">
+              &#x2630; List Sorter
+            </button>
+            <button type="button" class="seg-btn" data-sortmode="battle">
+              &#x1F3AF; Binary Search (A vs B)
+            </button>
+          </div>
+
+          <input
+            type="search"
+            id="step2SearchInput"
+            class="search-input"
+            placeholder="Filter title or year..."
+          />
+          <div id="step2TierFilters" class="tier-chips"></div>
+        </div>
+
+        <!-- SUBMODE A: DRAG & DROP + TIER LIST SORTER -->
+        <div id="listSortSubpanel">
+          <div class="sort-list-legend">
+            <span>Rank</span>
+            <span>Film</span>
+            <span>Original</span>
+            <span>Bell Target</span>
+            <span>Controls</span>
+          </div>
+
+          <div id="manualSortList" class="manual-sort-list"></div>
+        </div>
+
+        <!-- SUBMODE B: SINGLE-FILM BINARY SEARCH (A vs B) -->
+        <div id="battleSortSubpanel" class="hidden">
+          <div class="card battle-card">
+            <div class="battle-controls-top">
+              <div class="battle-scope-group">
+                <label for="binaryTargetFilmSelect">Film:</label>
+                <select id="binaryTargetFilmSelect"></select>
+                <button type="button" class="btn btn-secondary btn-sm" id="binaryRandomFilmBtn">
+                  &#x1F3B2; Random
+                </button>
+              </div>
+
+              <div class="battle-stats">
+                <span class="badge badge-orange" id="binaryStepBadge">Step 1</span>
+                <span class="badge badge-blue" id="binaryRangeBadge">#1 – #N</span>
+                <span class="muted-meta" id="binaryEstRemaining"></span>
+                <button type="button" class="btn btn-ghost btn-sm" id="binaryRestartBtn">
+                  &#x21BB; Restart
+                </button>
+              </div>
+            </div>
+
+            <div class="progress-track tournament-progress-track">
+              <div id="binaryProgressFill" class="progress-fill" style="width: 5%"></div>
+            </div>
+
+            <div id="binaryPlacedBanner" class="binary-placed-banner hidden"></div>
+
+            <div id="binaryActiveArena">
+              <h3 class="battle-prompt" id="battlePromptTitle">Which movie do you rank higher?</h3>
+
+              <div class="battle-arena" id="battleArena">
+                <button type="button" class="battle-contender" id="battleLeftBtn">
+                  <div class="contender-seed-badge" id="battleLeftSeed">Film Being Ranked</div>
+                  <div class="contender-poster-wrap" id="battleLeftPoster"></div>
+                  <div class="contender-info">
+                    <span class="contender-rank" id="battleLeftRank"></span>
+                    <h4 class="contender-title" id="battleLeftTitle"></h4>
+                    <span class="contender-stars" id="battleLeftStars"></span>
+                  </div>
+                  <span class="choose-pill">&larr; Prefer Left</span>
+                </button>
+
+                <div class="battle-vs-col">
+                  <div class="battle-vs">VS</div>
+                </div>
+
+                <button type="button" class="battle-contender" id="battleRightBtn">
+                  <div class="contender-seed-badge" id="battleRightSeed">Benchmark Film</div>
+                  <div class="contender-poster-wrap" id="battleRightPoster"></div>
+                  <div class="contender-info">
+                    <span class="contender-rank" id="battleRightRank"></span>
+                    <h4 class="contender-title" id="battleRightTitle"></h4>
+                    <span class="contender-stars" id="battleRightStars"></span>
+                  </div>
+                  <span class="choose-pill">Prefer Right &rarr;</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================ -->
+      <!-- VIEW 2: BELL CURVE & FULL RANKED COMPARISON TABLE                -->
+      <!-- ================================================================ -->
+      <section id="step3Panel" class="step-panel hidden">
+        <!-- Compact Bell Curve Histogram + Sliders -->
+        <div class="bell-layout">
+          <div class="card chart-card">
+            <div class="chart-card-header">
+              <div id="bellKpiGrid" class="kpi-inline"></div>
+              <div class="chart-legend">
+                <span class="legend-item"><i class="swatch swatch-orig"></i> Original</span>
+                <span class="legend-item"><i class="swatch swatch-bell"></i> Bell Curve</span>
+              </div>
+            </div>
+            <div id="bellCurveChart" class="bell-chart"></div>
+          </div>
+
+          <div class="card params-card">
+            <div class="slider-group">
+              <div class="slider-label">
+                <label for="meanSlider">Center (&mu;)</label>
+                <strong id="meanValueDisplay">2.75&starf;</strong>
+              </div>
+              <input type="range" id="meanSlider" min="2.00" max="3.50" step="0.05" value="2.75" />
+            </div>
+
+            <div class="slider-group">
+              <div class="slider-label">
+                <label for="stdSlider">Spread (&sigma;)</label>
+                <strong id="stdValueDisplay">1.00&starf;</strong>
+              </div>
+              <input type="range" id="stdSlider" min="0.55" max="1.60" step="0.05" value="1.00" />
+            </div>
+
+            <button type="button" class="btn btn-ghost btn-sm btn-block" id="resetCurveParamsBtn">
+              Reset (2.75&starf;, &sigma;=1.0)
+            </button>
+
+            <div class="bucket-AllocationTableWrap">
+              <table class="mini-table" id="bucketAllocationTable">
+                <thead>
+                  <tr>
+                    <th>Tier</th>
+                    <th>Share</th>
+                    <th>Orig</th>
+                    <th>Bell</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Filter Bar for Full Comparison Table -->
+        <div class="toolbar step3-toolbar">
+          <div class="step3-filters">
+            <label class="toggle-switch changed-only-toggle" title="Show only films whose bell-curve rating differs from your current Letterboxd rating">
+              <input type="checkbox" id="step3OnlyChangedToggle" />
+              <span>Only Changed Ratings</span>
+            </label>
+            <input
+              type="search"
+              id="step3SearchInput"
+              class="search-input"
+              placeholder="Search film title..."
+            />
+            <select id="step3DeltaFilter">
+              <option value="all">All Films</option>
+              <option value="changed_rating">Only Changed (&Delta; &ne; 0)</option>
+              <option value="upgraded">Upgraded (+&starf;)</option>
+              <option value="downgraded">Downgraded (&minus;&starf;)</option>
+              <option value="unchanged">Unchanged (=)</option>
+              <option value="unrated">Unrated</option>
+            </select>
+            <select id="step3BucketFilter">
+              <option value="all">All Tiers</option>
+              <option value="5.0">★★★★★</option>
+              <option value="4.5">★★★★½</option>
+              <option value="4.0">★★★★</option>
+              <option value="3.5">★★★½</option>
+              <option value="3.0">★★★</option>
+              <option value="2.5">★★½</option>
+              <option value="2.0">★★</option>
+              <option value="1.5">★½</option>
+              <option value="1.0">★</option>
+              <option value="0.5">½</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Full Ranked Comparison Table -->
+        <div id="bellTableContainer" class="card table-card">
+          <div class="table-responsive">
+            <table class="comparison-table">
+              <thead>
+                <tr>
+                  <th>Final Rank</th>
+                  <th>Rank Change</th>
+                  <th>Percentile</th>
+                  <th>Movie</th>
+                  <th>Original Rating</th>
+                  <th>Bell-Curve Rating</th>
+                  <th>Rating Delta (&Delta;)</th>
+                  <th>Continuous Score</th>
+                  <th>Z-Score</th>
+                </tr>
+              </thead>
+              <tbody id="bellTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script src="/app.js?v=13"></script>
+</body>
+</html>
