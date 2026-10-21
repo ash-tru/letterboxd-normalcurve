@@ -374,11 +374,45 @@ select:focus, .search-input:focus {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 14px;
   flex-wrap: wrap;
-  margin-bottom: 14px;
-  padding-bottom: 10px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
   border-bottom: 1px solid var(--border-subtle);
+}
+
+.primary-step-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.primary-step-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 22px;
+  font-size: 0.96rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  border-radius: var(--radius-sm);
+  border: 2px solid var(--lb-green);
+  background: rgba(0, 224, 84, 0.08);
+  color: var(--lb-green);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.primary-step-btn:hover {
+  background: rgba(0, 224, 84, 0.18);
+  transform: translateY(-1px);
+}
+
+.primary-step-btn.active {
+  background: var(--lb-green);
+  color: #061c0e;
+  box-shadow: 0 4px 16px rgba(0, 224, 84, 0.35);
 }
 
 .workspace-actions {
@@ -1937,10 +1971,16 @@ body.is-sorting-drag * {
     gap: 8px;
   }
 
-  .workspace-nav .segmented {
+  .workspace-nav .primary-step-tabs {
     width: 100%;
     display: grid;
     grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .workspace-nav .primary-step-btn {
+    padding: 10px 12px;
+    font-size: 0.88rem;
   }
 
   .workspace-actions {

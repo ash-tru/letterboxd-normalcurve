@@ -381,63 +381,6 @@ async function loadSavedSessionsList() {
   }
 }
 
-function downloadBellCurveCsv() {
-  const films = state.session?.bell_curve?.films || [];
-  if (!films.length) return;
-  const header = [
-    "Title",
-    "Year",
-    "Letterboxd URI",
-    "Rating",
-    "OriginalRating",
-    "RatingDelta",
-    "FinalRank",
-    "Percentile",
-    "ZScore",
-    "ContinuousBellScore",
-    "Slug",
-    "FilmID",
-    "PosterURL",
-  ];
-  const csvEscape = (v) => {
-    const s = v === null || v === undefined ? "" : String(v);
-    return s.includes(",") || s.includes('"') || s.includes("\n")
-      ? `"${s.replace(/"/g, '""')}"`
-      : s;
-  };
-  const rows = [header.join(",")];
-  for (const f of films) {
-    rows.push(
-      [
-        f.title || "",
-        f.year || "",
-        f.letterboxd_uri || "",
-        f.bell_rating ?? "",
-        f.original_rating ?? "",
-        f.rating_delta ?? "",
-        f.final_rank ?? "",
-        f.percentile ?? "",
-        f.z_score ?? "",
-        f.continuous_bell_score ?? "",
-        f.slug || "",
-        f.id || "",
-        f.poster_url || "",
-      ]
-        .map(csvEscape)
-        .join(",")
-    );
-  }
-  const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `${state.session.username || "letterboxd"}_bell_curve.csv`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
 function showError(msg) {
   const banner = document.getElementById("errorBanner");
   if (!msg) {
@@ -469,8 +412,7 @@ async function startLookup(usernameRaw, forceRefresh = false) {
     return null;
   }
 
-  const maxPages = document.getElementById("maxPagesSelect").value;
-  const maxPagesNum = maxPages ? Number(maxPages) : 139;
+  const maxPagesNum = 139; // Default: up to 10,000 films
   const includeUnrated = document.getElementById("includeUnratedToggle").checked;
   const startBtn = document.getElementById("startAddMovieBtn");
   const lookupBtn = document.getElementById("lookupBtn");
@@ -2061,30 +2003,6 @@ document.addEventListener("DOMContentLoaded", () => {
     if (u) startLookup(u, true);
   });
 
-  // CSV file import
-  document.getElementById("csvFileInput").addEventListener("change", async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const text = await file.text();
-    const username =
-      document.getElementById("usernameInput").value.trim() ||
-      file.name.replace(/\.csv$/i, "") ||
-      "csv_import";
-    try {
-      const res = await fetch("/api/import-csv", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ csv_text: text, username }),
-      });
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error || "CSV import failed");
-      applySession(data.session);
-      loadSavedSessionsList();
-    } catch (err) {
-      showError(err.message || String(err));
-    }
-  });
-
   // Include Unrated toggle (persisted to cloud/server storage)
   document.getElementById("includeUnratedToggle").addEventListener("change", async (e) => {
     if (!state.session) return;
@@ -2107,11 +2025,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Export CSV button
-  document.getElementById("exportCsvBtn").addEventListener("click", () => {
-    downloadBellCurveCsv();
-  });
-
   // Step navigation
   document.querySelectorAll("[data-step]").forEach((tab) => {
     tab.addEventListener("click", () => switchStep(tab.dataset.step));
@@ -2125,6 +2038,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById("resetOrderBtn").addEventListener("click", async () => {
     if (!state.session) return;
+    const confirmed = window.confirm(
+      "Are you sure you want to reset your manual movie order back to your original Letterboxd rating sort?"
+    );
+    if (!confirmed) return;
+
     const res = await fetch("/api/save-order", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

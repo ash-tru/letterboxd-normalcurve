@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LTRBX // Bell-Curve Ranker</title>
-  <link rel="stylesheet" href="/styles.css?v=13" />
+  <link rel="stylesheet" href="/styles.css?v=14" />
 </head>
 <body>
   <header class="topbar">
@@ -34,10 +34,6 @@
         <button type="button" class="btn btn-secondary btn-sm hidden" id="refreshBtn" title="Re-sync profile from Letterboxd">
           &#x21bb;
         </button>
-        <label class="btn btn-ghost btn-sm file-upload-label" title="Import CSV">
-          CSV
-          <input type="file" id="csvFileInput" accept=".csv" hidden />
-        </label>
       </form>
 
       <!-- Primary App Mode Switcher: Add Movie (Default) vs Full List Mode -->
@@ -75,13 +71,6 @@
           <input type="checkbox" id="includeUnratedToggle" checked />
           <span>Include unrated</span>
         </label>
-        <select id="maxPagesSelect" title="Max films to fetch from Letterboxd">
-          <option value="139">All Films (up to 10,000)</option>
-          <option value="28">Up to 2,000 Films</option>
-          <option value="10">Up to 720 Films</option>
-          <option value="5">Up to 360 Films</option>
-          <option value="1">1 Page (72)</option>
-        </select>
         <span id="saveStatusIndicator" class="save-indicator">Saved</span>
       </div>
     </div>
@@ -219,13 +208,13 @@
     <!-- FULL LIST MODE: SORT MOVIES + BELL CURVE TABLE                     -->
     <!-- ================================================================== -->
     <div id="workspace" class="hidden">
-      <!-- Minimalist 2-View Bar -->
+      <!-- Primary 2-View Bar -->
       <div class="workspace-nav">
-        <div class="segmented">
-          <button type="button" class="seg-btn active" data-step="step2">
+        <div class="primary-step-tabs" role="tablist" aria-label="Full List Views">
+          <button type="button" class="primary-step-btn active" data-step="step2">
             1. Sort Movies
           </button>
-          <button type="button" class="seg-btn" data-step="step3">
+          <button type="button" class="primary-step-btn" data-step="step3">
             2. Bell Curve Table
           </button>
         </div>
@@ -233,10 +222,7 @@
         <div class="workspace-actions">
           <span id="step2SummaryMeta" class="muted-meta"></span>
           <button type="button" class="btn btn-ghost btn-sm" id="resetOrderBtn" title="Reset manual order back to Letterboxd rating sort">
-            Reset Order
-          </button>
-          <button type="button" class="btn btn-secondary btn-sm" id="exportCsvBtn">
-            &#x2B73; Export CSV
+            &#x21BA; Reset Order
           </button>
         </div>
       </div>
@@ -456,6 +442,6 @@
     </div>
   </main>
 
-  <script src="/app.js?v=18"></script>
+  <script src="/app.js?v=19"></script>
 </body>
 </html>
