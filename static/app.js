@@ -41,6 +41,7 @@ const state = {
   addMovie: {
     candidates: [],
     selectedCandidate: null,
+    skipProfileSetup: false,
     binary: null, // { film, others, low, high, mid, step, maxSteps, history, preInsertBellBySlug }
     result: null, // { film, finalRank, totalAfter, bellRating, bellStars, boundaryAdjustments, preexistingAdjustments }
     showAllPreexisting: false,
@@ -348,11 +349,13 @@ function recordLocalSavedProfile(sessionData) {
 function setSaveStatus(text) {
   const indicator = document.getElementById("saveStatusIndicator");
   const mobileStatus = document.getElementById("mobileSaveStatus");
+  const redoButton = document.getElementById("redoAddMovieBtn");
   if (indicator) indicator.textContent = text;
   if (mobileStatus) {
-    mobileStatus.textContent = text === "Saved ✓" ? "" : text === "Saving..." ? "…" : text;
-    mobileStatus.setAttribute("aria-label", text === "Saved ✓" ? "Saved" : text);
+    mobileStatus.textContent = text === "Saved Ordered List on Server" ? "" : text === "Saving..." ? "…" : text;
+    mobileStatus.setAttribute("aria-label", text);
   }
+  if (redoButton) redoButton.disabled = text === "Saving...";
 }
 
 function schedulePersistOrder(addedFilm = null) {
@@ -384,7 +387,7 @@ function schedulePersistOrder(addedFilm = null) {
         if (addedFilm && data.session) {
           state.session = data.session;
         }
-        setSaveStatus("Saved ✓");
+        setSaveStatus("Saved Ordered List on Server");
         recordLocalSavedProfile(state.session);
       } else {
         setSaveStatus("Save Error");
@@ -621,6 +624,7 @@ function applySession(sessionData) {
   }
   state.addMovie.binary = null;
   state.addMovie.result = null;
+  state.addMovie.skipProfileSetup = false;
   document.body.classList.add("has-profile");
   document.body.classList.remove("mobile-profile-open");
   const mobileProfileBtn = document.getElementById("mobileProfileBtn");
@@ -628,7 +632,7 @@ function applySession(sessionData) {
   mobileProfileBtn.setAttribute("aria-expanded", "false");
   mobileProfileBtn.setAttribute("aria-label", `Change Letterboxd profile: @${sessionData.username}`);
   document.getElementById("mobileProfileName").textContent = `@${sessionData.username}`;
-  setSaveStatus("Saved ✓");
+  setSaveStatus("Saved Ordered List on Server");
   state.battle.binaryState = null;
   state.battle.history = [];
   state.battle.lastPlacedMessage = null;
@@ -778,10 +782,10 @@ function beginAddMovieBinarySearch(filmCandidate) {
     return;
   }
 
-  const maxSteps = Math.max(1, Math.ceil(Math.log2(others.length + 1)));
+  const maxSteps = 1 + Math.ceil(Math.log2(others.length + 1));
   const low = 0;
   const high = others.length - 1;
-  const mid = Math.floor((low + high) / 2);
+  const mid = Math.floor(Math.random() * others.length);
 
   state.addMovie.selectedCandidate = filmCandidate;
   state.addMovie.result = null;
@@ -832,6 +836,12 @@ function undoAddMovieBinaryStep() {
   b.mid = prev.mid;
   b.step = prev.step;
   renderAddMovieMode();
+}
+
+function redoAddMovieRating() {
+  const result = state.addMovie.result;
+  if (!result) return;
+  beginAddMovieBinarySearch(result.film);
 }
 
 function finishAddMoviePlacement(newFilm, othersList, insertIdx, preInsertBellBySlug) {
@@ -1121,6 +1131,17 @@ function renderStep2() {
     ensureBattlePair();
     renderBattleArena();
   }
+}
+
+function setSortMode(mode) {
+  state.sortMode = mode;
+  document.querySelectorAll("[data-sortmode]").forEach((button) =>
+    button.classList.toggle("active", button.dataset.sortmode === mode)
+  );
+  document.getElementById("listSortSubpanel").classList.toggle("hidden", mode !== "list");
+  document.getElementById("battleSortSubpanel").classList.toggle("hidden", mode !== "battle");
+  document.getElementById("tournamentSortSubpanel").classList.toggle("hidden", mode !== "tournament");
+  document.getElementById("step2WorkspaceActions").classList.toggle("hidden", mode !== "list");
 }
 
 const TOURNAMENT_DRAFT_PREFIX = "ltrbx_tournament_v1_";
@@ -1592,12 +1613,7 @@ function attachSortRowEvents(listEl) {
     const slug = btn.dataset.slug;
     const action = btn.dataset.action;
     if (action === "binary-rank") {
-      state.sortMode = "battle";
-      document.querySelectorAll("[data-sortmode]").forEach((b) =>
-        b.classList.toggle("active", b.dataset.sortmode === "battle")
-      );
-      document.getElementById("listSortSubpanel").classList.add("hidden");
-      document.getElementById("battleSortSubpanel").classList.remove("hidden");
+      setSortMode("battle");
       const sel = document.getElementById("binaryTargetFilmSelect");
       if (sel) sel.value = slug;
       startBinarySearchForFilm(slug);
@@ -1884,10 +1900,10 @@ function startBinarySearchForFilm(targetSlug, clearBanner = true) {
   }
 
   const others = films.filter((f) => f.slug !== useSlug);
-  const maxSteps = Math.max(1, Math.ceil(Math.log2(others.length + 1)));
+  const maxSteps = 1 + Math.ceil(Math.log2(others.length + 1));
   const low = 0;
   const high = others.length - 1;
-  const mid = Math.floor((low + high) / 2);
+  const mid = Math.floor(Math.random() * others.length);
 
   state.battle.binaryState = {
     targetSlug: useSlug,
@@ -2041,7 +2057,24 @@ function hasMatchingDistribution() {
 }
 
 function isProfileSetupRequired() {
-  return !hasMatchingDistribution() && !state.addMovie.binary && !state.addMovie.result;
+  return !state.addMovie.skipProfileSetup &&
+    !hasMatchingDistribution() && !state.addMovie.binary && !state.addMovie.result;
+}
+
+function skipProfileSetupForCurrentSession() {
+  state.addMovie.skipProfileSetup = true;
+  renderAddMovieMode();
+  document.getElementById("newMovieInput").focus();
+}
+
+async function resyncProfileSetup() {
+  const button = document.getElementById("profileSetupResyncBtn");
+  button.disabled = true;
+  try {
+    await startLookup(state.session.username, true);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function renderDistributionChart(buckets) {
@@ -2234,13 +2267,14 @@ document.addEventListener("DOMContentLoaded", () => {
     switchStep("step2");
   });
 
+  document.getElementById("profileSetupContinueBtn").addEventListener(
+    "click", skipProfileSetupForCurrentSession
+  );
+  document.getElementById("profileSetupResyncBtn").addEventListener("click", resyncProfileSetup);
+
   // Add Movie Form
   document.getElementById("addMovieForm").addEventListener("submit", async (e) => {
     e.preventDefault();
-    if (isProfileSetupRequired()) {
-      showError("Your rating distribution does not match the bell curve yet. Open Full List Mode to sort and update your ratings.");
-      return;
-    }
     const u = document.getElementById("usernameInput").value.trim();
     const movieQuery = document.getElementById("newMovieInput").value.trim();
     if (!u) {
@@ -2253,6 +2287,11 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!state.session || currentUsername.toLowerCase() !== u.toLowerCase().replace(/^@/, "")) {
       const loaded = await startLookup(u, false);
       if (!loaded) return;
+    }
+
+    if (isProfileSetupRequired()) {
+      showError("Your rating distribution does not match the bell curve yet. Open Full List Mode to sort and update your ratings, or choose Ignore to continue.");
+      return;
     }
 
     if (movieQuery) {
@@ -2283,6 +2322,8 @@ document.addEventListener("DOMContentLoaded", () => {
     state.addMovie.showAllPreexisting = e.target.checked;
     renderAddMovieMode();
   });
+
+  document.getElementById("redoAddMovieBtn").addEventListener("click", redoAddMovieRating);
 
   document.getElementById("rateAnotherMovieBtn").addEventListener("click", () => {
     state.addMovie.binary = null;
@@ -2333,20 +2374,8 @@ document.addEventListener("DOMContentLoaded", () => {
   // Step 2 submode toggle (List vs Single-Film Binary Search)
   document.querySelectorAll("[data-sortmode]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      state.sortMode = btn.dataset.sortmode;
+      setSortMode(btn.dataset.sortmode);
       if (state.sortMode === "tournament") loadTournamentDraft();
-      document.querySelectorAll("[data-sortmode]").forEach((b) =>
-        b.classList.toggle("active", b.dataset.sortmode === state.sortMode)
-      );
-      document
-        .getElementById("listSortSubpanel")
-        .classList.toggle("hidden", state.sortMode !== "list");
-      document
-        .getElementById("battleSortSubpanel")
-        .classList.toggle("hidden", state.sortMode !== "battle");
-      document
-        .getElementById("tournamentSortSubpanel")
-        .classList.toggle("hidden", state.sortMode !== "tournament");
       if (state.sortMode === "battle") {
         ensureBattlePair();
         renderBattleArena();

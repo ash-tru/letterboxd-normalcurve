@@ -619,6 +619,13 @@ select:focus, .search-input:focus {
   color: var(--text-secondary);
 }
 
+.profile-setup-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
 .profile-setup-chart {
   margin-top: 24px;
   padding-top: 18px;
@@ -1228,34 +1235,33 @@ select:focus, .search-input:focus {
 }
 
 /* Battle Mode (A vs B) */
-.battle-card {
-  max-width: 1100px;
-  margin: 0 auto;
+.card.battle-card {
+  width: 100%;
+  max-width: none;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
 }
 
 #tournamentStatus {
   flex: 1 1 280px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 #tournamentStatus h4 {
-  font-size: 0.94rem;
-  margin-bottom: 4px;
+  font-size: 0.82rem;
 }
 
 .tournament-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   flex-wrap: wrap;
-}
-
-.tournament-actions .btn {
-  padding: 8px 16px;
-}
-
-#tournamentSortSubpanel .battle-controls-top {
-  border-bottom: 0;
-  padding-bottom: 0;
 }
 
 #tournamentApplyBtn {
@@ -1326,16 +1332,30 @@ select:focus, .search-input:focus {
 
 #addMovieBattleCard .battle-controls-top {
   flex-wrap: nowrap;
+  padding-bottom: 6px;
+  border-bottom: 0;
 }
 
 #addMovieBattleCard .battle-stats {
   width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   gap: 8px;
 }
 
 #addBinaryEstRemaining {
-  margin-right: auto;
   white-space: nowrap;
+}
+
+#addMovieBattleCard .battle-prompt {
+  margin: 0;
+  font-size: 1rem;
+}
+
+#addMovieBattleCard .battle-actions {
+  display: flex;
+  justify-self: end;
+  gap: 8px;
 }
 
 .badge {
@@ -1493,7 +1513,7 @@ kbd {
 
 .battle-prompt {
   text-align: center;
-  margin: 18px 0;
+  margin: 12px 0;
   font-size: 1.2rem;
 }
 
@@ -1509,12 +1529,12 @@ kbd {
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  padding: 20px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: 12px;
+  gap: 8px;
   cursor: pointer;
   color: var(--text-primary);
   transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
@@ -1527,7 +1547,7 @@ kbd {
 }
 
 .contender-poster-wrap {
-  width: min(100%, clamp(180px, 26vw, 280px));
+  width: min(100%, clamp(180px, 22vw, 250px), max(150px, calc(66.667svh - 370px)));
   height: auto;
   aspect-ratio: 2 / 3;
   background: var(--bg-hover);
@@ -2262,7 +2282,19 @@ body.is-sorting-drag * {
   }
 
   #addMovieBattleCard .battle-stats {
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: 6px;
+  }
+
+  #addMovieBattleCard .battle-prompt {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    font-size: 0.96rem;
+  }
+
+  #addBinaryEstRemaining,
+  #addMovieBattleCard .battle-actions {
+    grid-row: 2;
   }
 
   .battle-scope-group {

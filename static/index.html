@@ -18,7 +18,7 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=4" />
   <link rel="shortcut icon" href="/favicon.svg?v=4" />
   <link rel="apple-touch-icon" href="/favicon.svg?v=4" />
-  <link rel="stylesheet" href="/styles.css?v=51" />
+  <link rel="stylesheet" href="/styles.css?v=56" />
 </head>
 <body>
   <header class="topbar">
@@ -150,7 +150,7 @@
       </div>
 
       <div id="globalOptionsBar" class="global-options hidden">
-        <span id="saveStatusIndicator" class="save-indicator">Saved</span>
+        <span id="saveStatusIndicator" class="save-indicator">Saved Ordered List on Server</span>
       </div>
     </div>
 
@@ -190,9 +190,17 @@
         <h2>Your ratings don't match the bell curve yet</h2>
         <p id="profileSetupSummary"></p>
         <p>Open Full List Mode to sort your movies and see their target ratings. Sorting alone won't change your Letterboxd ratings; update them on Letterboxd, then re-sync your profile here to check again.</p>
-        <button type="button" class="btn btn-primary" id="profileSetupOpenFullBtn">
-          Sort Movies in Full List Mode &rarr;
-        </button>
+        <div class="profile-setup-actions">
+          <button type="button" class="btn btn-primary" id="profileSetupOpenFullBtn">
+            Sort Movies in Full List Mode &rarr;
+          </button>
+          <button type="button" class="btn btn-secondary" id="profileSetupResyncBtn">
+            Re-sync and check again
+          </button>
+          <button type="button" class="btn btn-ghost" id="profileSetupContinueBtn">
+            Ignore and continue to add movie to rating
+          </button>
+        </div>
         <div class="profile-setup-chart">
           <div class="chart-card-header">
             <h3>Current vs target ratings</h3>
@@ -237,20 +245,21 @@
         <div class="battle-controls-top">
           <div class="battle-stats">
             <span class="muted-meta" id="addBinaryEstRemaining"></span>
-            <button type="button" class="btn btn-ghost btn-sm" id="addBinaryUndoBtn" disabled>
-              &#x21B6; Back
-            </button>
-            <button type="button" class="btn btn-ghost btn-sm" id="addBinaryRestartBtn">
-              &#x21BB; Restart
-            </button>
+            <h3 class="battle-prompt" id="addBattlePromptTitle">Which movie do you rank higher?</h3>
+            <div class="battle-actions">
+              <button type="button" class="btn btn-ghost btn-sm" id="addBinaryUndoBtn" disabled>
+                &#x21B6; Back
+              </button>
+              <button type="button" class="btn btn-ghost btn-sm" id="addBinaryRestartBtn">
+                &#x21BB; Restart
+              </button>
+            </div>
           </div>
         </div>
 
         <div class="progress-track tournament-progress-track">
           <div id="addBinaryProgressFill" class="progress-fill" style="width: 5%"></div>
         </div>
-
-        <h3 class="battle-prompt" id="addBattlePromptTitle">Which movie do you rank higher?</h3>
 
         <div class="battle-arena">
           <button type="button" class="battle-contender" id="addBattleLeftBtn">
@@ -294,6 +303,9 @@
         </div>
 
         <div class="add-result-actions">
+          <button type="button" class="btn btn-secondary" id="redoAddMovieBtn">
+            &#x21BB; Redo This Movie
+          </button>
           <button type="button" class="btn btn-secondary" id="rateAnotherMovieBtn">
             + Rate Another Movie
           </button>
@@ -342,7 +354,7 @@
             </button>
           </div>
 
-          <div class="workspace-actions">
+          <div class="workspace-actions" id="step2WorkspaceActions">
             <span id="step2SummaryMeta" class="muted-meta"></span>
             <button type="button" class="btn btn-ghost btn-sm" id="resetOrderBtn" title="Reset manual order back to Letterboxd rating sort">
               &#x21BA; Reset Order
@@ -566,6 +578,6 @@
   </main>
 
   <script src="/tournament.js?v=3"></script>
-  <script src="/app.js?v=47"></script>
+  <script src="/app.js?v=54"></script>
 </body>
 </html>
