@@ -319,12 +319,16 @@ def load_user_session(username: str) -> dict[str, Any] | None:
     clean = normalize_username(username)
     if _get_kv_config():
         try:
-            return _kv_load_session(clean)
+            res = _kv_load_session(clean)
+            if res:
+                return res
         except Exception:
             pass
     if _is_blob_configured():
         try:
-            return _blob_load_session(clean)
+            res = _blob_load_session(clean)
+            if res:
+                return res
         except Exception:
             pass
     return _disk_load_session(clean)
