@@ -20,6 +20,13 @@ from typing import Any
 
 from letterboxd import normalize_username
 
+try:
+    from vercel.blob import BlobNotFoundError
+    from vercel.blob import sync as vercel_blob_sync
+except ImportError:
+    vercel_blob_sync = None  # type: ignore[assignment]
+    BlobNotFoundError = FileNotFoundError  # type: ignore[assignment,misc]
+
 BASE_DIR = Path(__file__).resolve().parent
 
 
@@ -39,16 +46,20 @@ def _get_kv_config() -> tuple[str, str] | None:
     return None
 
 
-def _get_blob_token() -> str | None:
-    token = (os.environ.get("BLOB_READ_WRITE_TOKEN") or "").strip()
-    return token or None
+def _is_blob_configured() -> bool:
+    """Return True if Vercel Blob is configured via BLOB_STORE_ID (OIDC) or BLOB_READ_WRITE_TOKEN."""
+    return bool(
+        (os.environ.get("BLOB_STORE_ID") or "").strip()
+        or (os.environ.get("BLOB_READ_WRITE_TOKEN") or "").strip()
+        or (os.environ.get("VERCEL_BLOB_READ_WRITE_TOKEN") or "").strip()
+    )
 
 
 def get_storage_backend_name() -> str:
     """Return human-readable active storage backend name."""
     if _get_kv_config():
         return "vercel_kv"
-    if _get_blob_token():
+    if _is_blob_configured():
         return "vercel_blob"
     return "local_disk"
 
@@ -116,96 +127,84 @@ def _kv_list_sessions() -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# 2. Vercel Blob Implementation (Drive / Blob Storage)
+# 2. Vercel Blob Implementation (Supports OIDC `BLOB_STORE_ID` + `BLOB_READ_WRITE_TOKEN`)
 # ---------------------------------------------------------------------------
 
-BLOB_API_BASE = "https://blob.vercel-storage.com"
 BLOB_PREFIX = "ltrbx/sessions/"
+_DETECTED_BLOB_ACCESS: str | None = None
 
 
-def _blob_headers(token: str, extra: dict[str, str] | None = None) -> dict[str, str]:
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "x-api-version": "7",
-    }
-    if extra:
-        headers.update(extra)
-    return headers
-
-
-def _blob_list_raw(token: str, prefix: str = BLOB_PREFIX) -> list[dict[str, Any]]:
-    url = f"{BLOB_API_BASE}?prefix={urllib.parse.quote(prefix)}"
-    req = urllib.request.Request(url, headers=_blob_headers(token), method="GET")
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-        return data.get("blobs", [])
-
-
-def _blob_put_json(token: str, pathname: str, data_obj: Any) -> dict[str, Any]:
-    url = f"{BLOB_API_BASE}/{pathname.lstrip('/')}"
-    body = json.dumps(data_obj).encode("utf-8")
-    headers = _blob_headers(
-        token,
-        {
-            "Content-Type": "application/json",
-            "x-content-type": "application/json",
-            "x-add-random-suffix": "0",
-            "x-cache-control-max-age": "0",
-        },
+def _blob_put_bytes(pathname: str, data_bytes: bytes) -> None:
+    global _DETECTED_BLOB_ACCESS
+    if vercel_blob_sync is None:
+        return
+    modes = (
+        [_DETECTED_BLOB_ACCESS, "private" if _DETECTED_BLOB_ACCESS == "public" else "public"]
+        if _DETECTED_BLOB_ACCESS
+        else ["public", "private"]
     )
-    req = urllib.request.Request(url, data=body, headers=headers, method="PUT")
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    last_err: Exception | None = None
+    for mode in modes:
+        try:
+            vercel_blob_sync.put_blob(
+                pathname,
+                data_bytes,
+                access=mode,  # type: ignore[arg-type]
+                content_type="application/json",
+                add_random_suffix=False,
+                allow_overwrite=True,
+                cache_control_max_age=0,
+            )
+            _DETECTED_BLOB_ACCESS = mode
+            return
+        except Exception as exc:
+            last_err = exc
+    if last_err:
+        raise last_err
 
 
-def _blob_fetch_json(token: str, download_url: str) -> Any:
-    sep = "&" if "?" in download_url else "?"
-    bust_url = f"{download_url}{sep}_t={int(time.time() * 1000)}"
-    req = urllib.request.Request(
-        bust_url,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Cache-Control": "no-cache",
-        },
-        method="GET",
-    )
-    with urllib.request.urlopen(req, timeout=12) as resp:
-        return json.loads(resp.read().decode("utf-8"))
-
-
-def _blob_load_session(username: str) -> dict[str, Any] | None:
-    token = _get_blob_token()
-    if not token:
+def _blob_get_json(pathname: str) -> Any | None:
+    global _DETECTED_BLOB_ACCESS
+    if vercel_blob_sync is None:
         return None
-    target_path = f"{BLOB_PREFIX}{username}.json"
-    blobs = _blob_list_raw(token, prefix=target_path)
-    for b in blobs:
-        if b.get("pathname") == target_path and b.get("url"):
-            try:
-                return _blob_fetch_json(token, b["url"])
-            except Exception:
-                return None
+    modes = (
+        [_DETECTED_BLOB_ACCESS, "private" if _DETECTED_BLOB_ACCESS == "public" else "public"]
+        if _DETECTED_BLOB_ACCESS
+        else ["public", "private"]
+    )
+    for mode in modes:
+        try:
+            res = vercel_blob_sync.get_blob(pathname, access=mode)  # type: ignore[arg-type]
+            _DETECTED_BLOB_ACCESS = mode
+            return json.loads(res.body.decode("utf-8"))
+        except BlobNotFoundError:
+            return None
+        except Exception:
+            continue
     return None
 
 
+def _blob_load_session(username: str) -> dict[str, Any] | None:
+    if not _is_blob_configured() or vercel_blob_sync is None:
+        return None
+    target_path = f"{BLOB_PREFIX}{username}.json"
+    data = _blob_get_json(target_path)
+    return data if isinstance(data, dict) else None
+
+
 def _blob_save_session(username: str, payload: dict[str, Any]) -> None:
-    token = _get_blob_token()
-    if not token:
+    if not _is_blob_configured() or vercel_blob_sync is None:
         return
     target_path = f"{BLOB_PREFIX}{username}.json"
-    _blob_put_json(token, target_path, payload)
+    _blob_put_bytes(target_path, json.dumps(payload).encode("utf-8"))
 
     # Also update lightweight _index.json for fast saved-session listing
     index_path = f"{BLOB_PREFIX}_index.json"
     existing_index: list[dict[str, Any]] = []
     try:
-        blobs = _blob_list_raw(token, prefix=index_path)
-        for b in blobs:
-            if b.get("pathname") == index_path and b.get("url"):
-                loaded = _blob_fetch_json(token, b["url"])
-                if isinstance(loaded, list):
-                    existing_index = loaded
-                break
+        loaded = _blob_get_json(index_path)
+        if isinstance(loaded, list):
+            existing_index = loaded
     except Exception:
         existing_index = []
 
@@ -220,43 +219,41 @@ def _blob_save_session(username: str, payload: dict[str, Any]) -> None:
     existing_index = [item for item in existing_index if item.get("username") != username]
     existing_index.insert(0, meta)
     try:
-        _blob_put_json(token, index_path, existing_index[:25])
+        _blob_put_bytes(index_path, json.dumps(existing_index[:25]).encode("utf-8"))
     except Exception:
         pass
 
 
 def _blob_list_sessions() -> list[dict[str, Any]]:
-    token = _get_blob_token()
-    if not token:
+    if not _is_blob_configured() or vercel_blob_sync is None:
         return []
     index_path = f"{BLOB_PREFIX}_index.json"
-    blobs = _blob_list_raw(token, prefix=BLOB_PREFIX)
-    for b in blobs:
-        if b.get("pathname") == index_path and b.get("url"):
-            try:
-                loaded = _blob_fetch_json(token, b["url"])
-                if isinstance(loaded, list):
-                    return loaded
-            except Exception:
-                break
+    try:
+        loaded = _blob_get_json(index_path)
+        if isinstance(loaded, list):
+            return loaded
+    except Exception:
+        pass
 
-    # Fallback: construct list from blob metadata
     sessions = []
-    for b in blobs:
-        pname = b.get("pathname", "")
-        if not pname.endswith(".json") or pname.endswith("_index.json"):
-            continue
-        uname = pname.split("/")[-1].replace(".json", "")
-        sessions.append(
-            {
-                "username": uname,
-                "display_name": uname,
-                "avatar_url": None,
-                "total_films": 0,
-                "rated_films_count": 0,
-                "updated_at": b.get("uploadedAt"),
-            }
-        )
+    try:
+        for item in vercel_blob_sync.query_blobs(prefix=BLOB_PREFIX):
+            pname = item.pathname
+            if not pname.endswith(".json") or pname.endswith("_index.json"):
+                continue
+            uname = pname.split("/")[-1].replace(".json", "")
+            sessions.append(
+                {
+                    "username": uname,
+                    "display_name": uname,
+                    "avatar_url": None,
+                    "total_films": 0,
+                    "rated_films_count": 0,
+                    "updated_at": item.uploaded_at.isoformat() if item.uploaded_at else None,
+                }
+            )
+    except Exception:
+        pass
     return sessions
 
 
@@ -325,7 +322,7 @@ def load_user_session(username: str) -> dict[str, Any] | None:
             return _kv_load_session(clean)
         except Exception:
             pass
-    if _get_blob_token():
+    if _is_blob_configured():
         try:
             return _blob_load_session(clean)
         except Exception:
@@ -343,7 +340,7 @@ def save_user_session(username: str, payload: dict[str, Any]) -> None:
             return
         except Exception:
             pass
-    if _get_blob_token():
+    if _is_blob_configured():
         try:
             _blob_save_session(clean, payload)
             return
@@ -358,7 +355,7 @@ def list_saved_sessions() -> list[dict[str, Any]]:
             return _kv_list_sessions()
         except Exception:
             pass
-    if _get_blob_token():
+    if _is_blob_configured():
         try:
             return _blob_list_sessions()
         except Exception:

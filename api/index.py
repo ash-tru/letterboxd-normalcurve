@@ -34,9 +34,19 @@ from storage import (  # noqa: E402
     load_user_session,
 )
 
+try:
+    from vercel.headers import set_headers as set_vercel_headers
+except ImportError:
+    set_vercel_headers = None  # type: ignore[assignment]
+
 
 class handler(BaseHTTPRequestHandler):  # noqa: N801
     """Vercel @vercel/python request handler."""
+
+    def _register_oidc_headers(self) -> None:
+        if set_vercel_headers is not None:
+            hdrs = {k.lower(): v for k, v in self.headers.items()}
+            set_vercel_headers(hdrs)
 
     def _send_json(self, data: Any, status: int = 200) -> None:
         payload = json.dumps(data).encode("utf-8")
@@ -65,6 +75,7 @@ class handler(BaseHTTPRequestHandler):  # noqa: N801
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
+        self._register_oidc_headers()
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         qs = urllib.parse.parse_qs(parsed.query)
@@ -164,6 +175,7 @@ class handler(BaseHTTPRequestHandler):  # noqa: N801
         self._send_json({"error": "Not found"}, status=404)
 
     def do_POST(self) -> None:  # noqa: N802
+        self._register_oidc_headers()
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         body = self._read_json_body()
