@@ -292,11 +292,8 @@ function recomputeBellCurveClientSide() {
 }
 
 // ---------------------------------------------------------------------------
-// Browser localStorage Persistence (Compact Schema for up to 2,000+ Movies)
+// Cloud Storage Persistence (Vercel Blob / Upstash KV / Server Storage)
 // ---------------------------------------------------------------------------
-
-const LS_INDEX_KEY = "ltrbx_sessions_index_v1";
-const LS_USER_PREFIX = "ltrbx_user_v1_";
 
 function normalizeUsernameClient(raw) {
   let cleaned = String(raw || "").trim();
@@ -312,275 +309,63 @@ function normalizeUsernameClient(raw) {
   return cleaned.replace(/^@+/, "").replace(/^\/+|\/+$/g, "").trim().toLowerCase();
 }
 
-function sortFilmsByRatingClientSide(rawFilms, includeUnrated = true) {
-  const filtered = rawFilms
-    .filter((f) => includeUnrated || (f.original_rating !== null && f.original_rating !== undefined))
-    .map((f) => ({ ...f }));
-
-  filtered.sort((a, b) => {
-    const hasA = a.original_rating !== null && a.original_rating !== undefined ? 1 : 0;
-    const hasB = b.original_rating !== null && b.original_rating !== undefined ? 1 : 0;
-    if (hasA !== hasB) return hasB - hasA;
-    const rA = hasA ? Number(a.original_rating) : -1;
-    const rB = hasB ? Number(b.original_rating) : -1;
-    if (Math.abs(rB - rA) > 1e-6) return rB - rA;
-    const lA = a.liked ? 1 : 0;
-    const lB = b.liked ? 1 : 0;
-    if (lA !== lB) return lB - lA;
-    return (Number(a.watched_order) || 999999) - (Number(b.watched_order) || 999999);
-  });
-
-  filtered.forEach((f, idx) => {
-    f.initial_rating_rank = idx + 1;
-  });
-  return filtered;
-}
-
-function compressPosterToken(id, slug, posterUrl) {
-  if (!posterUrl) return null;
-  const m = String(posterUrl).match(
-    /^https:\/\/a\.ltrbxd\.com\/resized\/film-poster\/[0-9/]+\/\d+-[a-z0-9-]+-0-150-0-225-crop\.jpg(?:\?v=([a-zA-Z0-9]+))?$/
-  );
-  if (m && String(id) && /^\d+$/.test(String(id))) {
-    return `?${m[1] || ""}`;
-  }
-  return posterUrl;
-}
-
-function expandPosterToken(id, slug, token) {
-  if (!token) return null;
-  if (String(token).startsWith("?") && String(id) && /^\d+$/.test(String(id))) {
-    const key = String(token).slice(1);
-    const digits = String(id).split("").join("/");
-    return `https://a.ltrbxd.com/resized/film-poster/${digits}/${id}-${slug}-0-150-0-225-crop.jpg${
-      key ? `?v=${key}` : ""
-    }`;
-  }
-  return token;
-}
-
-function saveSessionToLocalStorage(session, addedFilm = null) {
-  if (!session || !session.username) return;
-  try {
-    const username = normalizeUsernameClient(session.username);
-    if (addedFilm && addedFilm.slug) {
-      const raw = session.raw_films || [];
-      const existingIdx = raw.findIndex((f) => f.slug === addedFilm.slug);
-      const entry = {
-        id: addedFilm.id || addedFilm.slug,
-        slug: addedFilm.slug,
-        title: addedFilm.title,
-        year: addedFilm.year || null,
-        full_title: addedFilm.year ? `${addedFilm.title} (${addedFilm.year})` : addedFilm.title,
-        letterboxd_uri: addedFilm.letterboxd_uri || `https://letterboxd.com/film/${addedFilm.slug}/`,
-        poster_url: addedFilm.poster_url || null,
-        original_rating: addedFilm.original_rating ?? addedFilm.bell_rating ?? null,
-        original_stars: formatStars(addedFilm.original_rating ?? addedFilm.bell_rating ?? null),
-        liked: Boolean(addedFilm.liked),
-        watched_order: 0,
-        is_added: true,
-      };
-      if (existingIdx !== -1) {
-        raw[existingIdx] = entry;
-      } else {
-        raw.unshift(entry);
-        raw.forEach((f, i) => {
-          f.watched_order = i + 1;
-        });
-      }
-      session.raw_films = raw;
-      session.total_films = raw.length;
-      session.rated_films_count = raw.filter(
-        (f) => f.original_rating !== null && f.original_rating !== undefined
-      ).length;
-      session.unrated_films_count = raw.length - session.rated_films_count;
-    }
-
-    // Order films in user's current manual sort order first so no separate 10,000-slug array is needed
-    const rawBySlug = {};
-    (session.raw_films || []).forEach((f) => {
-      rawBySlug[f.slug] = f;
-    });
-    const orderedRaw = [];
-    const seen = new Set();
-    for (const bf of session.bell_curve?.films || []) {
-      const rf = rawBySlug[bf.slug] || bf;
-      if (rf && !seen.has(rf.slug)) {
-        orderedRaw.push(rf);
-        seen.add(rf.slug);
-      }
-    }
-    for (const rf of session.raw_films || []) {
-      if (!seen.has(rf.slug)) {
-        orderedRaw.push(rf);
-        seen.add(rf.slug);
-      }
-    }
-
-    // Pack up to 10,000 films into ultra-compact tuples (~55 bytes/film -> ~550 KB for 10,000 films)
-    const compactFilms = orderedRaw.slice(0, 10000).map((f) => {
-      const idVal = /^\d+$/.test(String(f.id || "")) ? Number(f.id) : f.id || f.slug;
-      return [
-        idVal,
-        f.slug,
-        f.title,
-        f.year || null,
-        compressPosterToken(idVal, f.slug, f.poster_url),
-        f.original_rating !== undefined ? f.original_rating : null,
-        f.liked ? 1 : 0,
-        f.watched_order || 0,
-        f.is_added ? 1 : 0,
-      ];
-    });
-
-    const compactPayload = {
-      v: 2,
-      u: username,
-      dn: session.display_name || username,
-      av: session.avatar_url || null,
-      pu: session.profile_url || `https://letterboxd.com/${username}/`,
-      s: session.settings || { include_unrated: true, mean: 2.75, std_dev: 1.0, comparisons_done: 0 },
-      f: compactFilms,
-      ts: Date.now(),
-    };
-
-    localStorage.setItem(`${LS_USER_PREFIX}${username}`, JSON.stringify(compactPayload));
-
-    // Update index of saved usernames
-    let idxList = [];
-    try {
-      idxList = JSON.parse(localStorage.getItem(LS_INDEX_KEY) || "[]");
-    } catch (_e) {
-      idxList = [];
-    }
-    idxList = idxList.filter((item) => item.username !== username);
-    idxList.unshift({
-      username,
-      display_name: compactPayload.dn,
-      total_films: compactFilms.length,
-      ts: compactPayload.ts,
-    });
-    localStorage.setItem(LS_INDEX_KEY, JSON.stringify(idxList.slice(0, 15)));
-  } catch (err) {
-    console.warn("localStorage save warning:", err);
-  }
-}
-
-function loadSessionFromLocalStorage(rawUsername) {
-  const username = normalizeUsernameClient(rawUsername);
-  if (!username) return null;
-  try {
-    const rawJson = localStorage.getItem(`${LS_USER_PREFIX}${username}`);
-    if (!rawJson) return null;
-    const data = JSON.parse(rawJson);
-    if (!data || !Array.isArray(data.f)) return null;
-
-    const rawFilms = data.f.map((t, idx) => {
-      const [id, slug, title, year, posterToken, origRating, liked, watchedOrder, isAdded] = t;
-      const idStr = String(id || slug);
-      const slugStr = String(slug);
-      return {
-        id: idStr,
-        slug: slugStr,
-        title: String(title),
-        year: year || null,
-        full_title: year ? `${title} (${year})` : String(title),
-        letterboxd_uri: `https://letterboxd.com/film/${slugStr}/`,
-        poster_url: expandPosterToken(idStr, slugStr, posterToken),
-        original_rating: origRating !== null && origRating !== undefined ? Number(origRating) : null,
-        original_stars: formatStars(origRating),
-        liked: Boolean(liked),
-        watched_order: watchedOrder || idx + 1,
-        is_added: Boolean(isAdded),
-      };
-    });
-
-    const settings = data.s || {
-      include_unrated: true,
-      mean: 2.75,
-      std_dev: 1.0,
-      comparisons_done: 0,
-    };
-    const includeUnrated = Boolean(settings.include_unrated);
-    const ratingSorted = sortFilmsByRatingClientSide(rawFilms, includeUnrated);
-
-    const bySlug = {};
-    ratingSorted.forEach((f) => {
-      bySlug[f.slug] = f;
-    });
-    // In v2, rawFilms is already stored in manual sort order; in v1, data.o holds ordered slugs
-    const slugSequence = Array.isArray(data.o) ? data.o : rawFilms.map((f) => f.slug);
-    const ordered = [];
-    const seen = new Set();
-    for (const s of slugSequence) {
-      if (bySlug[s] && !seen.has(s)) {
-        ordered.push(bySlug[s]);
-        seen.add(s);
-      }
-    }
-    for (const f of ratingSorted) {
-      if (!seen.has(f.slug)) {
-        ordered.push(f);
-        seen.add(f.slug);
-      }
-    }
-
-    const ratedCount = rawFilms.filter(
-      (f) => f.original_rating !== null && f.original_rating !== undefined
-    ).length;
-
-    return {
-      username,
-      display_name: data.dn || username,
-      avatar_url: data.av || null,
-      profile_url: data.pu || `https://letterboxd.com/${username}/`,
-      total_films: rawFilms.length,
-      rated_films_count: ratedCount,
-      unrated_films_count: rawFilms.length - ratedCount,
-      settings,
-      raw_films: rawFilms,
-      rating_sorted_films: ratingSorted,
-      bell_curve: {
-        total_films: ordered.length,
-        parameters: { mean: settings.mean || 2.75, std_dev: settings.std_dev || 1.0 },
-        stats: {},
-        buckets: [],
-        films: ordered,
-      },
-    };
-  } catch (_e) {
-    return null;
-  }
-}
-
 function schedulePersistOrder(addedFilm = null) {
   if (!state.session) return;
   const indicator = document.getElementById("saveStatusIndicator");
   if (indicator) indicator.textContent = "Saving...";
 
   if (state.saveTimer) clearTimeout(state.saveTimer);
-  state.saveTimer = setTimeout(() => {
-    saveSessionToLocalStorage(state.session, addedFilm);
-    if (indicator) indicator.textContent = "Saved in Browser ✓";
-    loadSavedSessionsList();
-  }, addedFilm ? 20 : 180);
+  state.saveTimer = setTimeout(async () => {
+    try {
+      const slugs = state.session.bell_curve.films.map((f) => f.slug);
+      const payload = {
+        username: state.session.username,
+        ordered_slugs: slugs,
+        include_unrated: state.session.settings.include_unrated,
+        mean: state.session.settings.mean,
+        std_dev: state.session.settings.std_dev,
+        comparisons_done: state.session.settings.comparisons_done || 0,
+      };
+      if (addedFilm) {
+        payload.added_film = addedFilm;
+      }
+      const res = await fetch("/api/save-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (addedFilm && data.session) {
+          state.session = data.session;
+        }
+        if (indicator) indicator.textContent = "Saved ✓";
+        loadSavedSessionsList();
+      }
+    } catch (_err) {
+      if (indicator) indicator.textContent = "Save Error";
+    }
+  }, addedFilm ? 40 : 300);
 }
 
-function loadSavedSessionsList() {
+async function loadSavedSessionsList() {
   try {
-    const idxList = JSON.parse(localStorage.getItem(LS_INDEX_KEY) || "[]");
+    const res = await fetch("/api/saved");
+    if (!res.ok) return;
+    const data = await res.json();
+    const sessions = data.sessions || [];
     const bar = document.getElementById("savedSessionsBar");
     const list = document.getElementById("savedSessionsList");
-    if (!idxList.length) {
+    if (!sessions.length) {
       bar.classList.add("hidden");
       return;
     }
     bar.classList.remove("hidden");
-    list.innerHTML = idxList
+    list.innerHTML = sessions
       .map(
         (s) => `
         <button type="button" class="saved-chip" data-user="${escapeHtml(s.username)}">
-          <strong>@${escapeHtml(s.username)}</strong> (${s.total_films})
+          <strong>@${escapeHtml(s.username)}</strong>${s.total_films ? ` (${s.total_films})` : ""}
         </button>
       `
       )
@@ -676,360 +461,12 @@ function setProgress(visible, text = "", pct = 0) {
   document.getElementById("progressFill").style.width = `${Math.max(4, Math.min(100, pct))}%`;
 }
 
-// ---------------------------------------------------------------------------
-// Browser-Side HTML Parser & Client-Side Fetcher (Bypasses Render Server IP)
-// ---------------------------------------------------------------------------
-
-function extractTitleAndYearClient(fullDisplayName, fallbackName) {
-  const text = String(fullDisplayName || fallbackName || "").trim();
-  const m = text.match(/^(.*?)\s*\((\d{4})\)\s*$/);
-  if (m) {
-    return { title: m[1].trim() || text, year: parseInt(m[2], 10) };
-  }
-  return { title: text, year: null };
-}
-
-function buildPosterUrlClient(filmId, slug, cacheKey, hasDefaultPoster = true) {
-  if (!hasDefaultPoster || !filmId || !/^\d+$/.test(String(filmId)) || !slug) {
-    return null;
-  }
-  const digitPath = String(filmId).split("").join("/");
-  let url = `https://a.ltrbxd.com/resized/film-poster/${digitPath}/${filmId}-${slug}-0-150-0-225-crop.jpg`;
-  if (cacheKey) url += `?v=${cacheKey}`;
-  return url;
-}
-
-function parseFilmsPageHtmlClient(html, startOrder = 1) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, "text/html");
-
-  const rawTitle = (doc.querySelector("title")?.textContent || "").trim();
-  const displayName = rawTitle
-    .replace(/\u200e/g, "")
-    .split("’s films")[0]
-    .split("'s films")[0]
-    .trim();
-
-  const avatarEl = doc.querySelector(".avatar img");
-  const avatarUrl = avatarEl ? avatarEl.getAttribute("src") : null;
-
-  let totalPages = 1;
-  doc.querySelectorAll(".paginate-pages li a").forEach((a) => {
-    const num = parseInt(a.textContent.trim().replace(/,/g, ""), 10);
-    if (!isNaN(num) && num > totalPages) totalPages = num;
-  });
-
-  const items = doc.querySelectorAll("li.griditem, li.poster-container");
-  const films = [];
-
-  items.forEach((item, idx) => {
-    const rc = item.querySelector(".react-component, [data-item-slug], [data-film-slug]");
-    if (!rc) return;
-
-    const slug = (rc.getAttribute("data-item-slug") || rc.getAttribute("data-film-slug") || "").trim();
-    if (!slug) return;
-
-    const fullName = (
-      rc.getAttribute("data-item-full-display-name") ||
-      rc.getAttribute("data-item-name") ||
-      rc.getAttribute("data-film-name") ||
-      slug.replace(/-/g, " ")
-    ).trim();
-    const imgAlt = item.querySelector("img")?.getAttribute("alt") || fullName;
-    const { title, year } = extractTitleAndYearClient(fullName, imgAlt);
-
-    let filmId = "";
-    let cacheKey = "";
-    let hasDefaultPoster = true;
-
-    const resolvableRaw = rc.getAttribute("data-resolvable-poster-path");
-    if (resolvableRaw) {
-      try {
-        const resolvable = JSON.parse(resolvableRaw);
-        const uid = resolvable?.postered?.uid || "";
-        if (uid.includes(":")) filmId = uid.split(":").pop();
-        cacheKey = resolvable?.cacheBustingKey || "";
-        hasDefaultPoster = resolvable?.hasDefaultPoster !== false;
-      } catch (_e) {
-        // ignore
-      }
-    }
-
-    if (!filmId) {
-      const identRaw = rc.getAttribute("data-postered-identifier");
-      if (identRaw) {
-        try {
-          const ident = JSON.parse(identRaw);
-          const uid = ident?.uid || "";
-          if (uid.includes(":")) filmId = uid.split(":").pop();
-        } catch (_e) {
-          // ignore
-        }
-      }
-    }
-
-    if (!filmId) {
-      const uidEl = item.querySelector("[data-item-uid]");
-      const uid = uidEl?.getAttribute("data-item-uid") || "";
-      if (uid.includes(":")) filmId = uid.split(":").pop();
-    }
-
-    const posterUrl = buildPosterUrlClient(filmId, slug, cacheKey, hasDefaultPoster);
-
-    let originalRating = null;
-    const ratingSpan = item.querySelector("span[class*='rated-']");
-    if (ratingSpan) {
-      const m = (ratingSpan.getAttribute("class") || "").match(/rated-(\d+)/);
-      if (m) {
-        const val = parseInt(m[1], 10);
-        if (val >= 1 && val <= 10) originalRating = val / 2.0;
-      }
-    }
-
-    const liked = Boolean(item.querySelector("span.like.icon-liked"));
-    const itemLink =
-      rc.getAttribute("data-item-link") || rc.getAttribute("data-target-link") || `/film/${slug}/`;
-    const letterboxdUri = itemLink.startsWith("/") ? `https://letterboxd.com${itemLink}` : itemLink;
-
-    films.push({
-      id: filmId || slug,
-      slug,
-      title,
-      year,
-      full_title: fullName,
-      letterboxd_uri: letterboxdUri,
-      poster_url: posterUrl,
-      original_rating: originalRating,
-      original_stars: formatStars(originalRating),
-      liked,
-      watched_order: startOrder + idx,
-    });
-  });
-
-  return {
-    films,
-    meta: { display_name: displayName, avatar_url: avatarUrl, total_pages: totalPages },
-  };
-}
-
-function isValidLetterboxdHtml(html) {
-  if (!html || typeof html !== "string" || html.length < 1500) return false;
-  if (html.includes("<title>Just a moment...</title>")) return false;
-  return (
-    html.includes("griditem") ||
-    html.includes("poster-container") ||
-    html.includes("section-heading")
-  );
-}
-
-async function fetchLetterboxdPageViaBrowserProxies(targetUrl) {
-  const enc = encodeURIComponent(targetUrl);
-  const strategies = [
-    async () => {
-      const r = await fetch(`https://api.codetabs.com/v1/proxy?quest=${targetUrl}`, {
-        signal: AbortSignal.timeout(8000),
-      });
-      if (!r.ok) throw new Error(`codetabs ${r.status}`);
-      return await r.text();
-    },
-    async () => {
-      const r = await fetch(`https://api.allorigins.win/get?url=${enc}`, {
-        signal: AbortSignal.timeout(8000),
-      });
-      if (!r.ok) throw new Error(`allorigins ${r.status}`);
-      const d = await r.json();
-      return d.contents || "";
-    },
-    async () => {
-      const r = await fetch(`https://corsproxy.io/?url=${enc}`, {
-        signal: AbortSignal.timeout(8000),
-      });
-      if (!r.ok) throw new Error(`corsproxy ${r.status}`);
-      return await r.text();
-    },
-  ];
-
-  for (const fn of strategies) {
-    try {
-      const html = await fn();
-      if (isValidLetterboxdHtml(html)) {
-        return html;
-      }
-    } catch (_e) {
-      // try next browser proxy
-    }
-  }
-  return null;
-}
-
-async function fetchUserFilmsInBrowser(cleanUser, maxPagesCap = 139) {
-  const baseUrl = `https://letterboxd.com/${cleanUser}/films/`;
-  setProgress(true, `Browser fetching page 1 for @${cleanUser}...`, 6);
-
-  const page1Html = await fetchLetterboxdPageViaBrowserProxies(baseUrl);
-  if (!page1Html) {
-    return null; // Fall back to server
-  }
-
-  const page1Parsed = parseFilmsPageHtmlClient(page1Html, 1);
-  const totalPages = Math.min(page1Parsed.meta.total_pages || 1, maxPagesCap);
-  const pagesMap = { 1: page1Parsed.films };
-  let loadedCount = page1Parsed.films.length;
-
-  setProgress(
-    true,
-    `Browser fetched page 1 of ${totalPages} (${loadedCount} films)...`,
-    Math.round((1 / totalPages) * 100)
-  );
-
-  for (let p = 2; p <= totalPages; p++) {
-    const pageUrl = `https://letterboxd.com/${cleanUser}/films/page/${p}/`;
-    const html = await fetchLetterboxdPageViaBrowserProxies(pageUrl);
-    if (!html) {
-      return null; // If any page is blocked on public proxies, let fallback/sync handle it
-    }
-    const parsed = parseFilmsPageHtmlClient(html, (p - 1) * 72 + 1);
-    pagesMap[p] = parsed.films;
-    loadedCount += parsed.films.length;
-    setProgress(
-      true,
-      `Browser fetched page ${p} of ${totalPages} (${loadedCount} films)...`,
-      Math.min(98, Math.round((p / totalPages) * 100))
-    );
-  }
-
-  const allFilms = [];
-  const seen = new Set();
-  for (let p = 1; p <= totalPages; p++) {
-    for (const f of pagesMap[p] || []) {
-      if (!seen.has(f.slug)) {
-        seen.add(f.slug);
-        f.watched_order = allFilms.length + 1;
-        allFilms.push(f);
-        if (allFilms.length >= 10000) break;
-      }
-    }
-    if (allFilms.length >= 10000) break;
-  }
-
-  return buildSessionFromRawFilmsClient(
-    cleanUser,
-    page1Parsed.meta.display_name || cleanUser,
-    page1Parsed.meta.avatar_url,
-    allFilms
-  );
-}
-
-function buildSessionFromRawFilmsClient(username, displayName, avatarUrl, allFilms) {
-  const existingLocal = loadSessionFromLocalStorage(username);
-  const settings = existingLocal?.settings || {
-    include_unrated: document.getElementById("includeUnratedToggle")?.checked ?? true,
-    mean: 2.75,
-    std_dev: 1.0,
-    comparisons_done: 0,
-  };
-  const includeUnrated = Boolean(settings.include_unrated);
-  const ratingSorted = sortFilmsByRatingClientSide(allFilms, includeUnrated);
-
-  const prevSlugs = existingLocal?.bell_curve?.films?.map((f) => f.slug) || [];
-  const bySlug = {};
-  ratingSorted.forEach((f) => {
-    bySlug[f.slug] = f;
-  });
-  const ordered = [];
-  const seen = new Set();
-  for (const s of prevSlugs) {
-    if (bySlug[s] && !seen.has(s)) {
-      ordered.push(bySlug[s]);
-      seen.add(s);
-    }
-  }
-  for (const f of ratingSorted) {
-    if (!seen.has(f.slug)) {
-      ordered.push(f);
-      seen.add(f.slug);
-    }
-  }
-
-  const ratedCount = allFilms.filter(
-    (f) => f.original_rating !== null && f.original_rating !== undefined
-  ).length;
-
-  return {
-    username,
-    display_name: displayName || username,
-    avatar_url: avatarUrl || null,
-    profile_url: `https://letterboxd.com/${username}/`,
-    total_films: allFilms.length,
-    rated_films_count: ratedCount,
-    unrated_films_count: allFilms.length - ratedCount,
-    settings,
-    raw_films: allFilms,
-    rating_sorted_films: ratingSorted,
-    bell_curve: {
-      total_films: ordered.length,
-      parameters: { mean: settings.mean || 2.75, std_dev: settings.std_dev || 1.0 },
-      stats: {},
-      buckets: [],
-      films: ordered,
-    },
-  };
-}
-
-// Generate the 1-Click Browser Sync script that runs directly on letterboxd.com (same-origin, zero 403s)
-function buildLetterboxdSameOriginSyncScript() {
-  return `(async()=>{try{const m=location.pathname.match(/^\\/([^\\/]+)/);const u=m?m[1]:prompt("Letterboxd username:");if(!u)return;const b=document.createElement("div");b.style="position:fixed;top:16px;right:16px;z-index:999999;background:#14181c;color:#00e054;border:2px solid #00e054;padding:14px 20px;border-radius:10px;font:700 14px sans-serif;box-shadow:0 10px 30px rgba(0,0,0,.6)";b.textContent="LTRBX Sync: Fetching page 1...";document.body.appendChild(b);const p1=await(await fetch("/"+u+"/films/",{credentials:"include"})).text();const d1=new DOMParser().parseFromString(p1,"text/html");let tp=1;d1.querySelectorAll(".paginate-pages li a").forEach(a=>{const n=parseInt(a.textContent.replace(/,/g,""),10);if(n>tp)tp=n});tp=Math.min(tp,139);const parseDoc=doc=>{const out=[];doc.querySelectorAll("li.griditem,li.poster-container").forEach(li=>{const rc=li.querySelector(".react-component,[data-item-slug],[data-film-slug]");if(!rc)return;const slug=rc.getAttribute("data-item-slug")||rc.getAttribute("data-film-slug");if(!slug)return;const fn=(rc.getAttribute("data-item-full-display-name")||rc.getAttribute("data-item-name")||slug).trim();const ym=fn.match(/^(.*?)\\s*\\((\\d{4})\\)\\s*$/);const title=ym?ym[1].trim():fn;const year=ym?parseInt(ym[2],10):null;let id=slug,ck="";try{const r=JSON.parse(rc.getAttribute("data-resolvable-poster-path")||"{}");if(r.postered?.uid)id=r.postered.uid.split(":").pop();ck=r.cacheBustingKey||""}catch(e){}const rs=li.querySelector("span[class*='rated-']");let rt=null;if(rs){const rm=(rs.className||"").match(/rated-(\\d+)/);if(rm)rt=parseInt(rm[1],10)/2}const lk=Boolean(li.querySelector("span.like.icon-liked"))?1:0;out.push([id,slug,title,year,ck?"?"+ck:null,rt,lk])});return out};const all=parseDoc(d1);for(let p=2;p<=tp;p++){b.textContent="LTRBX Sync: Page "+p+" of "+tp+" ("+all.length+" films)...";const h=await(await fetch("/"+u+"/films/page/"+p+"/",{credentials:"include"})).text();all.push(...parseDoc(new DOMParser().parseFromString(h,"text/html")))}const payload=JSON.stringify({ltrbx_sync:1,u,f:all});if(window.opener){window.opener.postMessage({type:"LTRBX_SYNC_DATA",payload},"*");b.textContent="✓ Sent "+all.length+" films to LTRBX! Closing...";setTimeout(()=>window.close(),900);return}await navigator.clipboard.writeText(payload);b.textContent="✓ Copied "+all.length+" films! Switch back to LTRBX and click Paste Sync."}catch(e){alert("LTRBX Sync error: "+e.message)}})();`;
-}
-
-function importBrowserSyncPayload(rawString) {
-  const data = JSON.parse(rawString);
-  if (!data || !data.ltrbx_sync || !Array.isArray(data.f)) {
-    throw new Error("Invalid sync data. Run the sync bookmarklet/script on letterboxd.com first.");
-  }
-  const username = normalizeUsernameClient(data.u || "user");
-  const allFilms = data.f.map((t, idx) => {
-    const [id, slug, title, year, ckToken, origRating, liked] = t;
-    const idStr = String(id || slug);
-    const slugStr = String(slug);
-    return {
-      id: idStr,
-      slug: slugStr,
-      title: String(title),
-      year: year || null,
-      full_title: year ? `${title} (${year})` : String(title),
-      letterboxd_uri: `https://letterboxd.com/film/${slugStr}/`,
-      poster_url: expandPosterToken(idStr, slugStr, ckToken),
-      original_rating: origRating !== null && origRating !== undefined ? Number(origRating) : null,
-      original_stars: formatStars(origRating),
-      liked: Boolean(liked),
-      watched_order: idx + 1,
-      is_added: false,
-    };
-  });
-  const session = buildSessionFromRawFilmsClient(username, username, null, allFilms);
-  saveSessionToLocalStorage(session);
-  applySession(session);
-  loadSavedSessionsList();
-  showError(null);
-  const modal = document.getElementById("browserSyncModal");
-  if (modal) modal.classList.add("hidden");
-  return session;
-}
-
 async function startLookup(usernameRaw, forceRefresh = false) {
   showError(null);
   const cleanUser = normalizeUsernameClient(usernameRaw);
   if (!cleanUser) {
     showError("Please enter a valid Letterboxd username.");
     return null;
-  }
-
-  // 1. Check browser localStorage first unless forceRefresh is requested
-  const existingLocal = loadSessionFromLocalStorage(cleanUser);
-  if (!forceRefresh && existingLocal && existingLocal.raw_films?.length) {
-    applySession(existingLocal);
-    loadSavedSessionsList();
-    return existingLocal;
   }
 
   const maxPages = document.getElementById("maxPagesSelect").value;
@@ -1040,30 +477,7 @@ async function startLookup(usernameRaw, forceRefresh = false) {
   if (startBtn) startBtn.disabled = true;
   if (lookupBtn) lookupBtn.disabled = true;
 
-  // 2. On remote hosts (e.g. Render), try browser-side fetching first to avoid cloud IP blocks
-  const isLocalhost =
-    location.hostname === "localhost" || location.hostname === "127.0.0.1";
-  if (!isLocalhost) {
-    try {
-      const browserSession = await fetchUserFilmsInBrowser(cleanUser, maxPagesNum);
-      if (browserSession && browserSession.raw_films?.length) {
-        setProgress(false);
-        if (startBtn) startBtn.disabled = false;
-        if (lookupBtn) lookupBtn.disabled = false;
-        saveSessionToLocalStorage(browserSession);
-        applySession(browserSession);
-        loadSavedSessionsList();
-        return browserSession;
-      }
-    } catch (_browserErr) {
-      // Fall through to server lookup
-    }
-  }
-
-  // 3. Fallback to server-side lookup
   setProgress(true, `Looking up Letterboxd profile "${cleanUser}"...`, 8);
-  const prevSlugs = existingLocal?.bell_curve?.films?.map((f) => f.slug) || null;
-  const prevSettings = existingLocal?.settings || {};
 
   try {
     const res = await fetch("/api/lookup", {
@@ -1071,13 +485,9 @@ async function startLookup(usernameRaw, forceRefresh = false) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         username: cleanUser,
-        force_refresh: true,
+        force_refresh: forceRefresh,
         max_pages: maxPagesNum,
         include_unrated: includeUnrated,
-        ordered_slugs: prevSlugs,
-        mean: prevSettings.mean ?? 2.75,
-        std_dev: prevSettings.std_dev ?? 1.0,
-        comparisons_done: prevSettings.comparisons_done ?? 0,
       }),
     });
     const data = await res.json();
@@ -1089,13 +499,12 @@ async function startLookup(usernameRaw, forceRefresh = false) {
       setProgress(false);
       if (startBtn) startBtn.disabled = false;
       if (lookupBtn) lookupBtn.disabled = false;
-      saveSessionToLocalStorage(data.session);
       applySession(data.session);
       loadSavedSessionsList();
       return data.session;
     }
 
-    // Poll job status
+    // Poll job status (local server mode)
     const jobId = data.job_id;
     while (true) {
       await new Promise((r) => setTimeout(r, 450));
@@ -1108,7 +517,6 @@ async function startLookup(usernameRaw, forceRefresh = false) {
         setProgress(false);
         if (startBtn) startBtn.disabled = false;
         if (lookupBtn) lookupBtn.disabled = false;
-        saveSessionToLocalStorage(jdata.session);
         applySession(jdata.session);
         loadSavedSessionsList();
         return jdata.session;
@@ -1126,36 +534,9 @@ async function startLookup(usernameRaw, forceRefresh = false) {
     setProgress(false);
     if (startBtn) startBtn.disabled = false;
     if (lookupBtn) lookupBtn.disabled = false;
-    const msg = err.message || String(err);
-    showError(
-      `${msg} — Tip: If Cloudflare blocks cloud server IPs, click "Browser Sync" in the top bar to fetch directly from your browser.`
-    );
-    openBrowserSyncModal(cleanUser);
+    showError(err.message || String(err));
     return null;
   }
-}
-
-function openBrowserSyncModal(username = "") {
-  const modal = document.getElementById("browserSyncModal");
-  if (!modal) return;
-  const user = cleanUserOrDefault(username);
-  const linkEl = document.getElementById("syncOpenLetterboxdBtn");
-  if (linkEl) {
-    linkEl.href = `https://letterboxd.com/${encodeURIComponent(user)}/films/`;
-  }
-  const bookmarkletEl = document.getElementById("syncBookmarkletLink");
-  if (bookmarkletEl) {
-    bookmarkletEl.href = `javascript:${encodeURIComponent(buildLetterboxdSameOriginSyncScript())}`;
-  }
-  modal.classList.remove("hidden");
-}
-
-function cleanUserOrDefault(raw) {
-  return (
-    normalizeUsernameClient(raw) ||
-    normalizeUsernameClient(document.getElementById("usernameInput")?.value) ||
-    "ashsii"
-  );
 }
 
 function switchAppMode(mode) {
@@ -2257,11 +1638,18 @@ function populateBinaryTargetSelect() {
   const sel = document.getElementById("binaryTargetFilmSelect");
   if (!sel) return;
   const currentVal = sel.value;
-  const films = state.session?.bell_curve?.films || [];
+  const films = [...(state.session?.bell_curve?.films || [])].sort((a, b) => {
+    const cmp = String(a.title || "").localeCompare(String(b.title || ""), undefined, {
+      sensitivity: "base",
+      numeric: true,
+    });
+    if (cmp !== 0) return cmp;
+    return (Number(a.year) || 0) - (Number(b.year) || 0);
+  });
   sel.innerHTML = films
     .map(
       (f) =>
-        `<option value="${escapeHtml(f.slug)}">#${f.final_rank} — ${escapeHtml(f.title)} (${f.year || "N/A"}) [${escapeHtml(f.bell_stars)}]</option>`
+        `<option value="${escapeHtml(f.slug)}">${escapeHtml(f.title)}${f.year ? ` (${f.year})` : ""}</option>`
     )
     .join("");
   if (currentVal && films.some((f) => f.slug === currentVal)) {
@@ -2673,58 +2061,6 @@ document.addEventListener("DOMContentLoaded", () => {
     if (u) startLookup(u, true);
   });
 
-  // Direct Browser Sync Modal Controls & postMessage listener
-  document.getElementById("openBrowserSyncBtn")?.addEventListener("click", () => {
-    openBrowserSyncModal(document.getElementById("usernameInput").value.trim());
-  });
-
-  document.getElementById("closeBrowserSyncBtn")?.addEventListener("click", () => {
-    document.getElementById("browserSyncModal")?.classList.add("hidden");
-  });
-
-  document.getElementById("copySyncScriptBtn")?.addEventListener("click", async (e) => {
-    const script = buildLetterboxdSameOriginSyncScript();
-    try {
-      await navigator.clipboard.writeText(script);
-      e.target.textContent = "Copied Script ✓";
-      setTimeout(() => {
-        e.target.textContent = "Copy Console Script";
-      }, 2000);
-    } catch (_err) {
-      prompt("Copy this script and run it in DevTools Console on letterboxd.com:", script);
-    }
-  });
-
-  document.getElementById("pasteSyncDataBtn")?.addEventListener("click", async () => {
-    try {
-      const text = await navigator.clipboard.readText();
-      if (text) importBrowserSyncPayload(text);
-    } catch (_err) {
-      showError("Could not read clipboard automatically — please paste into the text box next to the button.");
-    }
-  });
-
-  document.getElementById("manualSyncPasteInput")?.addEventListener("input", (e) => {
-    const val = e.target.value.trim();
-    if (!val) return;
-    try {
-      importBrowserSyncPayload(val);
-      e.target.value = "";
-    } catch (_err) {
-      // wait until valid JSON
-    }
-  });
-
-  window.addEventListener("message", (e) => {
-    if (e.data && e.data.type === "LTRBX_SYNC_DATA" && e.data.payload) {
-      try {
-        importBrowserSyncPayload(e.data.payload);
-      } catch (err) {
-        showError(err.message || String(err));
-      }
-    }
-  });
-
   // CSV file import
   document.getElementById("csvFileInput").addEventListener("change", async (e) => {
     const file = e.target.files?.[0];
@@ -2742,7 +2078,6 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || "CSV import failed");
-      saveSessionToLocalStorage(data.session);
       applySession(data.session);
       loadSavedSessionsList();
     } catch (err) {
@@ -2750,38 +2085,29 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Include Unrated toggle (100% client-side + localStorage)
-  document.getElementById("includeUnratedToggle").addEventListener("change", (e) => {
+  // Include Unrated toggle (persisted to cloud/server storage)
+  document.getElementById("includeUnratedToggle").addEventListener("change", async (e) => {
     if (!state.session) return;
-    const includeUnrated = e.target.checked;
-    state.session.settings.include_unrated = includeUnrated;
-    const prevSlugs = state.session.bell_curve.films.map((f) => f.slug);
-    const ratingSorted = sortFilmsByRatingClientSide(state.session.raw_films || [], includeUnrated);
-    const bySlug = {};
-    ratingSorted.forEach((f) => {
-      bySlug[f.slug] = f;
+    state.session.settings.include_unrated = e.target.checked;
+    const slugs = state.session.bell_curve.films.map((f) => f.slug);
+    const res = await fetch("/api/save-order", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: state.session.username,
+        ordered_slugs: slugs,
+        include_unrated: e.target.checked,
+        mean: state.session.settings.mean,
+        std_dev: state.session.settings.std_dev,
+      }),
     });
-    const ordered = [];
-    const seen = new Set();
-    for (const s of prevSlugs) {
-      if (bySlug[s] && !seen.has(s)) {
-        ordered.push(bySlug[s]);
-        seen.add(s);
-      }
+    if (res.ok) {
+      const data = await res.json();
+      applySession(data.session);
     }
-    for (const f of ratingSorted) {
-      if (!seen.has(f.slug)) {
-        ordered.push(f);
-        seen.add(f.slug);
-      }
-    }
-    state.session.rating_sorted_films = ratingSorted;
-    state.session.bell_curve.films = ordered;
-    applySession(state.session);
-    schedulePersistOrder();
   });
 
-  // Client-side Export CSV button
+  // Export CSV button
   document.getElementById("exportCsvBtn").addEventListener("click", () => {
     downloadBellCurveCsv();
   });
@@ -2797,17 +2123,22 @@ document.addEventListener("DOMContentLoaded", () => {
     renderStep2List();
   });
 
-  document.getElementById("resetOrderBtn").addEventListener("click", () => {
+  document.getElementById("resetOrderBtn").addEventListener("click", async () => {
     if (!state.session) return;
-    const includeUnrated = Boolean(state.session.settings?.include_unrated ?? true);
-    const ratingSorted = sortFilmsByRatingClientSide(state.session.raw_films || [], includeUnrated);
-    state.session.rating_sorted_films = ratingSorted;
-    state.session.bell_curve.films = ratingSorted.map((f) => ({ ...f }));
-    state.session.settings.comparisons_done = 0;
-    state.battle.binaryState = null;
-    state.battle.lastPlacedMessage = null;
-    applySession(state.session);
-    schedulePersistOrder();
+    const res = await fetch("/api/save-order", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: state.session.username,
+        reset_to_rating_sort: true,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      state.battle.binaryState = null;
+      state.battle.lastPlacedMessage = null;
+      applySession(data.session);
+    }
   });
 
   // Step 2 submode toggle (List vs Single-Film Binary Search)

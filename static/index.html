@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LTRBX // Bell-Curve Ranker</title>
-  <link rel="stylesheet" href="/styles.css?v=12" />
+  <link rel="stylesheet" href="/styles.css?v=13" />
 </head>
 <body>
   <header class="topbar">
@@ -33,9 +33,6 @@
         <button type="submit" class="btn btn-primary btn-sm" id="lookupBtn">Load Profile</button>
         <button type="button" class="btn btn-secondary btn-sm hidden" id="refreshBtn" title="Re-sync profile from Letterboxd">
           &#x21bb;
-        </button>
-        <button type="button" class="btn btn-ghost btn-sm" id="openBrowserSyncBtn" title="Fetch directly from your browser if Cloudflare blocks Render server IP">
-          Browser Sync
         </button>
         <label class="btn btn-ghost btn-sm file-upload-label" title="Import CSV">
           CSV
@@ -85,7 +82,7 @@
           <option value="5">Up to 360 Films</option>
           <option value="1">1 Page (72)</option>
         </select>
-        <span id="saveStatusIndicator" class="save-indicator">Saved in Browser</span>
+        <span id="saveStatusIndicator" class="save-indicator">Saved</span>
       </div>
     </div>
 
@@ -457,55 +454,8 @@
         </div>
       </section>
     </div>
-
-    <!-- Direct Browser Sync Modal (100% immune to Cloudflare Server IP blocks) -->
-    <div id="browserSyncModal" class="sync-modal-backdrop hidden">
-      <div class="card sync-modal">
-        <div class="sync-modal-header">
-          <h3>Direct Browser Sync (Bypass Cloudflare 403)</h3>
-          <button type="button" class="btn btn-ghost btn-sm" id="closeBrowserSyncBtn">&times;</button>
-        </div>
-        <p class="muted-meta">
-          Cloudflare blocks cloud datacenter IPs (like Render.com) on page 2+. Running the fetch inside your own browser tab on <strong>letterboxd.com</strong> uses your browser's own session and never gets 403 blocked:
-        </p>
-
-        <ol class="sync-steps">
-          <li>
-            <strong>Drag this button to your Bookmarks Bar</strong> (or click <em>Copy Script</em> below):
-            <div class="sync-action-row">
-              <a id="syncBookmarkletLink" href="#" class="btn btn-primary btn-sm" onclick="event.preventDefault(); alert('Drag this button to your bookmarks bar, then click it while on letterboxd.com!');">
-                &#x26A1; LTRBX Browser Sync
-              </a>
-              <button type="button" class="btn btn-secondary btn-sm" id="copySyncScriptBtn">
-                Copy Console Script
-              </button>
-              <a id="syncOpenLetterboxdBtn" href="https://letterboxd.com/" target="_blank" rel="noopener noreferrer" class="btn btn-ghost btn-sm">
-                1. Open Your Letterboxd Films &nearr;
-              </a>
-            </div>
-          </li>
-          <li>
-            On your Letterboxd films tab, click the <strong>&#x26A1; LTRBX Browser Sync</strong> bookmarklet (or paste the script into DevTools Console <kbd>F12</kbd>). It will fetch all pages in ~2 seconds and send them back automatically!
-          </li>
-          <li>
-            If opened in a separate tab, click below (or paste) to import the copied films:
-            <div class="sync-action-row">
-              <button type="button" class="btn btn-primary btn-sm" id="pasteSyncDataBtn">
-                Paste Copied Sync Data
-              </button>
-              <input
-                type="text"
-                id="manualSyncPasteInput"
-                class="search-input"
-                placeholder="Or paste sync JSON here..."
-              />
-            </div>
-          </li>
-        </ol>
-      </div>
-    </div>
   </main>
 
-  <script src="/app.js?v=15"></script>
+  <script src="/app.js?v=18"></script>
 </body>
 </html>
