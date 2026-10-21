@@ -360,11 +360,14 @@ class LookupHandler(BaseJsonHandler):
 
             try:
                 existing = load_user_session(username)
-                prev_slugs = None
-                prev_settings: dict[str, Any] = {}
-                if existing and existing.get("bell_curve", {}).get("films"):
+                prev_slugs = (
+                    body.get("ordered_slugs")
+                    if isinstance(body.get("ordered_slugs"), list)
+                    else None
+                )
+                prev_settings: dict[str, Any] = (existing or {}).get("settings", {})
+                if not prev_slugs and existing and existing.get("bell_curve", {}).get("films"):
                     prev_slugs = [f["slug"] for f in existing["bell_curve"]["films"]]
-                    prev_settings = existing.get("settings", {})
 
                 profile = fetch_user_watched_films(
                     username=username,

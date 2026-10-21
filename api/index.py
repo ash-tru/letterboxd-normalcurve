@@ -168,6 +168,8 @@ class handler(BaseHTTPRequestHandler):  # noqa: N801
 
         # Serve static frontend files if routed here
         rel_name = "index.html" if path in ("", "/", "/api/index.py") else path.lstrip("/")
+        if rel_name == "favicon.ico":
+            rel_name = "favicon.svg"
         if rel_name.startswith("static/"):
             rel_name = rel_name[len("static/"):]
         static_file = (STATIC_DIR / rel_name).resolve()
@@ -178,6 +180,8 @@ class handler(BaseHTTPRequestHandler):  # noqa: N801
                 ctype = "text/css; charset=utf-8"
             elif static_file.suffix == ".js":
                 ctype = "application/javascript; charset=utf-8"
+            elif static_file.suffix == ".svg":
+                ctype = "image/svg+xml; charset=utf-8"
             self.send_response(200)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(content)))

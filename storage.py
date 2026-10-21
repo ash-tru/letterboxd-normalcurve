@@ -100,30 +100,10 @@ def _kv_load_session(username: str) -> dict[str, Any] | None:
 def _kv_save_session(username: str, payload: dict[str, Any]) -> None:
     raw_json = json.dumps(payload)
     _kv_command(["SET", f"ltrbx:session:{username}", raw_json])
-    meta = {
-        "username": username,
-        "display_name": payload.get("display_name") or username,
-        "avatar_url": payload.get("avatar_url"),
-        "total_films": payload.get("total_films", 0),
-        "rated_films_count": payload.get("rated_films_count", 0),
-        "updated_at": payload.get("updated_at"),
-    }
-    _kv_command(["HSET", "ltrbx:sessions_index", username, json.dumps(meta)])
 
 
 def _kv_list_sessions() -> list[dict[str, Any]]:
-    res = _kv_command(["HGETALL", "ltrbx:sessions_index"])
-    if not res or not isinstance(res, list):
-        return []
-    sessions: list[dict[str, Any]] = []
-    for i in range(0, len(res) - 1, 2):
-        val_str = res[i + 1]
-        try:
-            sessions.append(json.loads(val_str))
-        except Exception:
-            continue
-    sessions.sort(key=lambda s: s.get("updated_at") or "", reverse=True)
-    return sessions
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -198,63 +178,9 @@ def _blob_save_session(username: str, payload: dict[str, Any]) -> None:
     target_path = f"{BLOB_PREFIX}{username}.json"
     _blob_put_bytes(target_path, json.dumps(payload).encode("utf-8"))
 
-    # Also update lightweight _index.json for fast saved-session listing
-    index_path = f"{BLOB_PREFIX}_index.json"
-    existing_index: list[dict[str, Any]] = []
-    try:
-        loaded = _blob_get_json(index_path)
-        if isinstance(loaded, list):
-            existing_index = loaded
-    except Exception:
-        existing_index = []
-
-    meta = {
-        "username": username,
-        "display_name": payload.get("display_name") or username,
-        "avatar_url": payload.get("avatar_url"),
-        "total_films": payload.get("total_films", 0),
-        "rated_films_count": payload.get("rated_films_count", 0),
-        "updated_at": payload.get("updated_at"),
-    }
-    existing_index = [item for item in existing_index if item.get("username") != username]
-    existing_index.insert(0, meta)
-    try:
-        _blob_put_bytes(index_path, json.dumps(existing_index[:25]).encode("utf-8"))
-    except Exception:
-        pass
-
 
 def _blob_list_sessions() -> list[dict[str, Any]]:
-    if not _is_blob_configured() or vercel_blob_sync is None:
-        return []
-    index_path = f"{BLOB_PREFIX}_index.json"
-    try:
-        loaded = _blob_get_json(index_path)
-        if isinstance(loaded, list):
-            return loaded
-    except Exception:
-        pass
-
-    sessions = []
-    try:
-        for item in vercel_blob_sync.query_blobs(prefix=BLOB_PREFIX):
-            pname = item.pathname
-            if not pname.endswith(".json") or pname.endswith("_index.json"):
-                continue
-            uname = pname.split("/")[-1].replace(".json", "")
-            sessions.append(
-                {
-                    "username": uname,
-                    "display_name": uname,
-                    "avatar_url": None,
-                    "total_films": 0,
-                    "rated_films_count": 0,
-                    "updated_at": item.uploaded_at.isoformat() if item.uploaded_at else None,
-                }
-            )
-    except Exception:
-        pass
-    return sessions
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -354,14 +280,5 @@ def save_user_session(username: str, payload: dict[str, Any]) -> None:
 
 
 def list_saved_sessions() -> list[dict[str, Any]]:
-    if _get_kv_config():
-        try:
-            return _kv_list_sessions()
-        except Exception:
-            pass
-    if _is_blob_configured():
-        try:
-            return _blob_list_sessions()
-        except Exception:
-            pass
-    return _disk_list_sessions()
+    """Saved profile chips are stored per-browser on the client, never globally."""
+    return []

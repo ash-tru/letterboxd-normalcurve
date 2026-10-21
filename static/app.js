@@ -309,6 +309,41 @@ function normalizeUsernameClient(raw) {
   return cleaned.replace(/^@+/, "").replace(/^\/+|\/+$/g, "").trim().toLowerCase();
 }
 
+const LOCAL_SAVED_PROFILES_KEY = "ltrbx_local_saved_profiles_v1";
+
+function getLocalSavedProfiles() {
+  try {
+    const raw = window.localStorage.getItem(LOCAL_SAVED_PROFILES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_e) {
+    return [];
+  }
+}
+
+function recordLocalSavedProfile(sessionData) {
+  if (!sessionData || !sessionData.username) return;
+  try {
+    const clean = String(sessionData.username).toLowerCase();
+    const existing = getLocalSavedProfiles().filter(
+      (item) => String(item.username || "").toLowerCase() !== clean
+    );
+    existing.unshift({
+      username: sessionData.username,
+      total_films: sessionData.total_films || 0,
+      updated_at: new Date().toISOString(),
+    });
+    window.localStorage.setItem(
+      LOCAL_SAVED_PROFILES_KEY,
+      JSON.stringify(existing.slice(0, 12))
+    );
+  } catch (_e) {
+    // ignore storage errors in private browsing
+  }
+  loadSavedSessionsList();
+}
+
 function schedulePersistOrder(addedFilm = null) {
   if (!state.session) return;
   const indicator = document.getElementById("saveStatusIndicator");
@@ -340,7 +375,7 @@ function schedulePersistOrder(addedFilm = null) {
           state.session = data.session;
         }
         if (indicator) indicator.textContent = "Saved ✓";
-        loadSavedSessionsList();
+        recordLocalSavedProfile(state.session);
       }
     } catch (_err) {
       if (indicator) indicator.textContent = "Save Error";
@@ -348,37 +383,32 @@ function schedulePersistOrder(addedFilm = null) {
   }, addedFilm ? 40 : 300);
 }
 
-async function loadSavedSessionsList() {
-  try {
-    const res = await fetch("/api/saved");
-    if (!res.ok) return;
-    const data = await res.json();
-    const sessions = data.sessions || [];
-    const bar = document.getElementById("savedSessionsBar");
-    const list = document.getElementById("savedSessionsList");
-    if (!sessions.length) {
-      bar.classList.add("hidden");
-      return;
-    }
-    bar.classList.remove("hidden");
-    list.innerHTML = sessions
-      .map(
-        (s) => `
-        <button type="button" class="saved-chip" data-user="${escapeHtml(s.username)}">
-          <strong>@${escapeHtml(s.username)}</strong>${s.total_films ? ` (${s.total_films})` : ""}
-        </button>
-      `
-      )
-      .join("");
-    list.querySelectorAll(".saved-chip").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        document.getElementById("usernameInput").value = btn.dataset.user;
-        startLookup(btn.dataset.user, false);
-      });
-    });
-  } catch (_e) {
-    // ignore
+function loadSavedSessionsList() {
+  const sessions = getLocalSavedProfiles();
+  const bar = document.getElementById("savedSessionsBar");
+  const list = document.getElementById("savedSessionsList");
+  if (!bar || !list) return;
+  if (!sessions.length) {
+    bar.classList.add("hidden");
+    list.innerHTML = "";
+    return;
   }
+  bar.classList.remove("hidden");
+  list.innerHTML = sessions
+    .map(
+      (s) => `
+      <button type="button" class="saved-chip" data-user="${escapeHtml(s.username)}">
+        <strong>@${escapeHtml(s.username)}</strong>${s.total_films ? ` (${s.total_films})` : ""}
+      </button>
+    `
+    )
+    .join("");
+  list.querySelectorAll(".saved-chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.getElementById("usernameInput").value = btn.dataset.user;
+      startLookup(btn.dataset.user, false);
+    });
+  });
 }
 
 function showError(msg) {
@@ -404,6 +434,22 @@ function setProgress(visible, text = "", pct = 0) {
   document.getElementById("progressFill").style.width = `${Math.max(4, Math.min(100, pct))}%`;
 }
 
+function updateLookupButtonState() {
+  const btn = document.getElementById("lookupBtn");
+  const inp = document.getElementById("usernameInput");
+  if (!btn || !inp) return;
+  const typedUser = normalizeUsernameClient(inp.value);
+  const loadedUser = normalizeUsernameClient(state.session?.username || "");
+  if (loadedUser && typedUser === loadedUser) {
+    btn.innerHTML = "&#x21bb; Re-sync (Keeps Order)";
+    btn.title =
+      "Re-sync new watched movies & ratings from Letterboxd without changing your existing manual sort order";
+  } else {
+    btn.textContent = "Load Profile";
+    btn.title = "Load watched movies for this Letterboxd username";
+  }
+}
+
 async function startLookup(usernameRaw, forceRefresh = false) {
   showError(null);
   const cleanUser = normalizeUsernameClient(usernameRaw);
@@ -419,7 +465,20 @@ async function startLookup(usernameRaw, forceRefresh = false) {
   if (startBtn) startBtn.disabled = true;
   if (lookupBtn) lookupBtn.disabled = true;
 
-  setProgress(true, `Looking up Letterboxd profile "${cleanUser}"...`, 8);
+  const currentSlugs =
+    state.session &&
+    normalizeUsernameClient(state.session.username) === cleanUser &&
+    Array.isArray(state.session.bell_curve?.films)
+      ? state.session.bell_curve.films.map((f) => f.slug)
+      : undefined;
+
+  setProgress(
+    true,
+    forceRefresh
+      ? `Re-syncing "${cleanUser}" from Letterboxd (keeping your existing movie order)...`
+      : `Looking up Letterboxd profile "${cleanUser}"...`,
+    8
+  );
 
   try {
     const res = await fetch("/api/lookup", {
@@ -430,6 +489,7 @@ async function startLookup(usernameRaw, forceRefresh = false) {
         force_refresh: forceRefresh,
         max_pages: maxPagesNum,
         include_unrated: includeUnrated,
+        ordered_slugs: currentSlugs,
       }),
     });
     const data = await res.json();
@@ -500,8 +560,9 @@ function switchAppMode(mode) {
 
 function applySession(sessionData) {
   state.session = sessionData;
+  recordLocalSavedProfile(sessionData);
   document.getElementById("usernameInput").value = sessionData.username || "";
-  document.getElementById("refreshBtn").classList.remove("hidden");
+  updateLookupButtonState();
   document.getElementById("globalOptionsBar").classList.remove("hidden");
   document.getElementById("emptyState").classList.add("hidden");
 
@@ -936,20 +997,6 @@ function renderAddMovieMode() {
   }
 }
 
-function buildTierChipsHtml(activeTier, includeUnrated) {
-  const tiers = ["all", "5.0", "4.5", "4.0", "3.5", "3.0", "2.5", "2.0", "1.5", "1.0", "0.5"];
-  if (includeUnrated) tiers.push("unrated");
-  return tiers
-    .map((t) => {
-      let label = "All";
-      if (t === "unrated") label = "Unrated";
-      else if (t !== "all") label = STAR_LABELS[t];
-      const cls = activeTier === t ? "tier-chip active" : "tier-chip";
-      return `<button type="button" class="${cls}" data-tier="${t}">${label}</button>`;
-    })
-    .join("");
-}
-
 function buildFallbackPosterUrl(film) {
   const slug = encodeURIComponent(film.slug || "film");
   const params = new URLSearchParams({
@@ -1011,16 +1058,6 @@ function renderStep2() {
     metaEl.textContent = `${films.length} films`;
   }
 
-  // Tier filter chips for Step 2 list
-  const chipsEl = document.getElementById("step2TierFilters");
-  chipsEl.innerHTML = buildTierChipsHtml(state.step2Tier, s.settings.include_unrated);
-  chipsEl.querySelectorAll(".tier-chip").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      state.step2Tier = btn.dataset.tier;
-      renderStep2List();
-    });
-  });
-
   renderStep2List();
   if (state.sortMode === "battle") {
     ensureBattlePair();
@@ -1033,11 +1070,6 @@ function renderStep2List() {
   const q = state.step2Search.trim().toLowerCase();
 
   const visibleFilms = films.filter((f) => {
-    if (state.step2Tier === "unrated") {
-      if (f.original_rating !== null && f.original_rating !== undefined) return false;
-    } else if (state.step2Tier !== "all") {
-      if (Number(f.original_rating).toFixed(1) !== state.step2Tier) return false;
-    }
     if (q) {
       const hay = `${f.title} ${f.year || ""}`.toLowerCase();
       if (!hay.includes(q)) return false;
@@ -1157,10 +1189,10 @@ function renderStep2List() {
         </div>
 
         <div class="row-controls">
-          <button type="button" class="icon-btn btn-rating-up" data-action="rating-up" data-slug="${escapeHtml(f.slug)}" title="Move UP 1 rating tier (places at bottom of higher ★ tier)">+&starf; Up</button>
-          <button type="button" class="icon-btn btn-rating-down" data-action="rating-down" data-slug="${escapeHtml(f.slug)}" title="Move DOWN 1 rating tier (places at top of lower ★ tier)">&minus;&starf; Down</button>
-          <button type="button" class="icon-btn" data-action="tier-top" data-slug="${escapeHtml(f.slug)}" title="Move to TOP of current rating tier">&#x2912; Top</button>
-          <button type="button" class="icon-btn" data-action="tier-bottom" data-slug="${escapeHtml(f.slug)}" title="Move to BOTTOM of current rating tier">&#x2913; Bot</button>
+          <button type="button" class="icon-btn btn-rating-up" data-action="rating-up" data-slug="${escapeHtml(f.slug)}" title="Move UP 1 rating tier (places at bottom of higher ★ tier)">+&starf;<span class="btn-label-text"> Up</span></button>
+          <button type="button" class="icon-btn btn-rating-down" data-action="rating-down" data-slug="${escapeHtml(f.slug)}" title="Move DOWN 1 rating tier (places at top of lower ★ tier)">&minus;&starf;<span class="btn-label-text"> Down</span></button>
+          <button type="button" class="icon-btn" data-action="tier-top" data-slug="${escapeHtml(f.slug)}" title="Move to TOP of current rating tier">&#x2912;<span class="btn-label-text"> Top</span></button>
+          <button type="button" class="icon-btn" data-action="tier-bottom" data-slug="${escapeHtml(f.slug)}" title="Move to BOTTOM of current rating tier">&#x2913;<span class="btn-label-text"> Bot</span></button>
           <button type="button" class="icon-btn" data-action="binary-rank" data-slug="${escapeHtml(f.slug)}" title="Binary-search rank this film (A vs B)">&#x1F3AF;</button>
         </div>
       </div>
@@ -1826,7 +1858,6 @@ function renderStep3() {
       return false;
     }
 
-    if (state.step3Bucket !== "all" && f.bell_rating.toFixed(1) !== state.step3Bucket) return false;
     if (q) {
       const hay = `${f.title} ${f.year || ""}`.toLowerCase();
       if (!hay.includes(q)) return false;
@@ -1927,11 +1958,19 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  // Persistent Top-Bar Username Lookup Form (works in both modes)
+  // Persistent Top-Bar Username Lookup / Re-sync Form (single button, works in both modes)
+  document.getElementById("usernameInput").addEventListener("input", () => {
+    updateLookupButtonState();
+  });
+
   document.getElementById("lookupForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const u = document.getElementById("usernameInput").value.trim();
-    if (u) await startLookup(u, false);
+    if (!u) return;
+    const typedUser = normalizeUsernameClient(u);
+    const loadedUser = normalizeUsernameClient(state.session?.username || "");
+    const shouldForceRefresh = Boolean(loadedUser && typedUser === loadedUser);
+    await startLookup(u, shouldForceRefresh);
   });
 
   // Add Movie Form
@@ -1995,12 +2034,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById("switchToFullListFromResultBtn").addEventListener("click", () => {
     switchAppMode("full");
-  });
-
-  // Force refresh button
-  document.getElementById("refreshBtn").addEventListener("click", () => {
-    const u = state.session?.username || document.getElementById("usernameInput").value.trim();
-    if (u) startLookup(u, true);
   });
 
   // Include Unrated toggle (persisted to cloud/server storage)
@@ -2181,11 +2214,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById("step3DeltaFilter").addEventListener("change", (e) => {
     state.step3Delta = e.target.value;
-    renderStep3();
-  });
-
-  document.getElementById("step3BucketFilter").addEventListener("change", (e) => {
-    state.step3Bucket = e.target.value;
     renderStep3();
   });
 });

@@ -18,6 +18,14 @@
       "destination": "/api/index.py?__route=/app.js"
     },
     {
+      "source": "/favicon.svg",
+      "destination": "/api/index.py?__route=/favicon.svg"
+    },
+    {
+      "source": "/favicon.ico",
+      "destination": "/api/index.py?__route=/favicon.svg"
+    },
+    {
       "source": "/",
       "destination": "/api/index.py?__route=/"
     }
