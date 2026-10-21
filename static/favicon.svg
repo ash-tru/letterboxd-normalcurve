@@ -2,20 +2,27 @@
   <rect width="64" height="64" rx="14" fill="#14181c" />
   <defs>
     <path
-      id="curve"
-      d="M 6 50 C 14 50, 19 46, 24.5 31 C 28.5 19, 31.8 11, 32 11 C 32.2 11, 35.5 19, 39.5 31 C 45 46, 50 50, 58 50 Z"
+      id="area"
+      d="M 4 48 C 13 48, 17.5 42, 22.5 31 C 26 22.5, 29 18, 32 18 C 35 18, 38 22.5, 41.5 31 C 46.5 42, 51 48, 60 48 Z"
+    />
+    <path
+      id="line"
+      d="M 4 48 C 13 48, 17.5 42, 22.5 31 C 26 22.5, 29 18, 32 18 C 35 18, 38 22.5, 41.5 31 C 46.5 42, 51 48, 60 48"
     />
     <clipPath id="segL">
-      <rect x="0" y="0" width="21.5" height="64" />
+      <rect x="0" y="0" width="21" height="64" />
     </clipPath>
     <clipPath id="segC">
-      <rect x="24" y="0" width="16" height="64" />
+      <rect x="23" y="0" width="18" height="64" />
     </clipPath>
     <clipPath id="segR">
-      <rect x="42.5" y="0" width="21.5" height="64" />
+      <rect x="43" y="0" width="21" height="64" />
     </clipPath>
   </defs>
-  <use href="#curve" clip-path="url(#segL)" fill="#ff8000" />
-  <use href="#curve" clip-path="url(#segC)" fill="#00e054" />
-  <use href="#curve" clip-path="url(#segR)" fill="#40bcf4" />
+  <use href="#area" clip-path="url(#segL)" fill="#ff8000" fill-opacity="0.35" />
+  <use href="#area" clip-path="url(#segC)" fill="#00e054" fill-opacity="0.35" />
+  <use href="#area" clip-path="url(#segR)" fill="#40bcf4" fill-opacity="0.35" />
+  <use href="#line" clip-path="url(#segL)" fill="none" stroke="#ff8000" stroke-width="4" stroke-linecap="round" />
+  <use href="#line" clip-path="url(#segC)" fill="none" stroke="#00e054" stroke-width="4" stroke-linecap="round" />
+  <use href="#line" clip-path="url(#segR)" fill="none" stroke="#40bcf4" stroke-width="4" stroke-linecap="round" />
 </svg>
