@@ -18,7 +18,7 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=4" />
   <link rel="shortcut icon" href="/favicon.svg?v=4" />
   <link rel="apple-touch-icon" href="/favicon.svg?v=4" />
-  <link rel="stylesheet" href="/styles.css?v=56" />
+  <link rel="stylesheet" href="/styles.css?v=61" />
 </head>
 <body>
   <header class="topbar">
@@ -185,7 +185,7 @@
         <p>Enter your Letterboxd username above and load your profile to start rating movies.</p>
       </div>
 
-      <div id="profileSetupPage" class="card profile-setup hidden">
+      <div id="profileSetupPage" class="profile-setup hidden">
         <span class="profile-setup-kicker">Your starting point</span>
         <h2>Your ratings don't match the bell curve yet</h2>
         <p id="profileSetupSummary"></p>
@@ -435,6 +435,7 @@
         </div>
 
         <div id="tournamentSortSubpanel" class="hidden">
+          <div id="tournamentNotice" class="alert alert-error tournament-notice hidden" role="alert"></div>
           <div class="card battle-card">
             <div class="battle-controls-top">
               <div id="tournamentStatus">
@@ -488,7 +489,7 @@
       <section id="step3Panel" class="step-panel hidden">
         <!-- Compact Bell Curve Histogram + Sliders -->
         <div class="bell-layout">
-          <div class="card chart-card">
+          <div class="chart-card">
             <div class="chart-card-header">
               <div id="bellKpiGrid" class="kpi-inline"></div>
               <div class="chart-legend">
@@ -499,7 +500,7 @@
             <div id="bellCurveChart" class="bell-chart"></div>
           </div>
 
-          <div class="card params-card">
+          <div class="params-card">
             <div class="slider-group">
               <div class="slider-label">
                 <label for="meanSlider">Center (&mu;)</label>
@@ -553,13 +554,12 @@
         </div>
 
         <!-- Full Ranked Comparison Table -->
-        <div id="bellTableContainer" class="card table-card">
+        <div id="bellTableContainer" class="table-card">
           <div class="table-responsive">
             <table class="comparison-table">
               <thead>
                 <tr>
                   <th>Final Rank</th>
-                  <th>Rank Change</th>
                   <th>Percentile</th>
                   <th>Movie</th>
                   <th>Original Rating</th>
@@ -578,6 +578,6 @@
   </main>
 
   <script src="/tournament.js?v=3"></script>
-  <script src="/app.js?v=54"></script>
+  <script src="/app.js?v=56"></script>
 </body>
 </html>

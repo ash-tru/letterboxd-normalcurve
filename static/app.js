@@ -437,6 +437,18 @@ function showError(msg) {
   banner.classList.remove("hidden");
 }
 
+let tournamentNoticeTimer;
+
+function showTournamentError(message) {
+  const notice = document.getElementById("tournamentNotice");
+  clearTimeout(tournamentNoticeTimer);
+  notice.textContent = message || "";
+  notice.classList.toggle("hidden", !message);
+  if (message) {
+    tournamentNoticeTimer = setTimeout(() => showTournamentError(null), 4500);
+  }
+}
+
 function setProgress(visible, text = "", pct = 0) {
   const area = document.getElementById("progressArea");
   if (!visible) {
@@ -1134,6 +1146,7 @@ function renderStep2() {
 }
 
 function setSortMode(mode) {
+  if (mode !== "tournament") showTournamentError(null);
   state.sortMode = mode;
   document.querySelectorAll("[data-sortmode]").forEach((button) =>
     button.classList.toggle("active", button.dataset.sortmode === mode)
@@ -1157,7 +1170,7 @@ function saveTournamentDraft() {
       JSON.stringify(state.tournament)
     );
   } catch (err) {
-    showError(`Could not save tournament progress: ${err.message}`);
+    showTournamentError(`Could not save tournament progress: ${err.message}`);
   }
 }
 
@@ -1169,11 +1182,11 @@ function loadTournamentDraft() {
     const draft = JSON.parse(stored);
     const slugs = state.session.bell_curve.films.map((film) => film.slug);
     if (draft.username !== state.session.username) {
-      showError("This saved tournament belongs to a different Letterboxd user. Start a new tournament.");
+      showTournamentError("This saved tournament belongs to a different Letterboxd user. Start a new tournament.");
       return;
     }
     if (!TournamentSort.matches(draft, state.session.username, slugs)) {
-      showError("Your film list has changed since this tournament started. Start a new tournament.");
+      showTournamentError("Your film list has changed since this tournament started. Start a new tournament.");
       return;
     }
     if (!Array.isArray(draft.lists) || !Array.isArray(draft.nextLists) ||
@@ -1183,12 +1196,12 @@ function loadTournamentDraft() {
     }
     if (!draft.undoBase || !Array.isArray(draft.history)) {
       TournamentSort.enableUndo(draft);
-      showError("This tournament predates Back. You can undo new picks, or restart to undo from the beginning.");
+      showTournamentError("This tournament predates Back. You can undo new picks, or restart to undo from the beginning.");
     }
     state.tournament = draft;
     saveTournamentDraft();
   } catch (err) {
-    showError(`Could not resume tournament: ${err.message}`);
+    showTournamentError(`Could not resume tournament: ${err.message}`);
   }
 }
 
@@ -1269,7 +1282,7 @@ function chooseTournament(side) {
   if (!TournamentSort.matches(
     draft, state.session.username, state.session.bell_curve.films.map((film) => film.slug)
   )) {
-    showError("The movie list changed. Discard this tournament and start again.");
+    showTournamentError("The movie list changed. Discard this tournament and start again.");
     return;
   }
   TournamentSort.choose(draft, TournamentSort.pair(draft)[side]);
@@ -1288,7 +1301,7 @@ async function applyTournament() {
   if (!draft || draft.lists.length !== 1) return;
   const slugs = state.session.bell_curve.films.map((film) => film.slug);
   if (!TournamentSort.matches(draft, state.session.username, slugs)) {
-    showError("The movie list changed. Discard this tournament and start again.");
+    showTournamentError("The movie list changed. Discard this tournament and start again.");
     return;
   }
   const btn = document.getElementById("tournamentApplyBtn");
@@ -1317,6 +1330,7 @@ async function applyTournament() {
       draftRemovalError = err;
     }
     state.tournament = null;
+    showTournamentError(null);
     applySession(data.session);
     state.tournamentApplied = {
       username: data.session.username,
@@ -1325,10 +1339,10 @@ async function applyTournament() {
     };
     renderTournament();
     if (draftRemovalError) {
-      showError(`Order applied, but could not remove the saved draft: ${draftRemovalError.message}`);
+      showTournamentError(`Order applied, but could not remove the saved draft: ${draftRemovalError.message}`);
     }
   } catch (err) {
-    showError(err.message || String(err));
+    showTournamentError(err.message || String(err));
   } finally {
     btn.disabled = false;
   }
@@ -2030,19 +2044,6 @@ function undoBattleChoice() {
 // VIEW 2: Bell Curve Chart & Full Ranked Comparison Table
 // ---------------------------------------------------------------------------
 
-function formatRankChangeBadge(film) {
-  const initRank = Number(film.initial_rating_rank || film.final_rank);
-  const finalRank = Number(film.final_rank);
-  const diff = initRank - finalRank;
-  if (diff > 0) {
-    return `<span class="delta-pill delta-up">&uarr; +${diff}</span>`;
-  }
-  if (diff < 0) {
-    return `<span class="delta-pill delta-down">&darr; ${diff}</span>`;
-  }
-  return `<span class="delta-pill delta-same">&mdash;</span>`;
-}
-
 function isFilmRatingChanged(film) {
   if (film.original_rating === null || film.original_rating === undefined) {
     return true;
@@ -2158,7 +2159,7 @@ function renderStep3() {
 function renderBellComparisonTable(filteredFilms) {
   const tbody = document.getElementById("bellTableBody");
   if (!filteredFilms.length) {
-    tbody.innerHTML = `<tr><td colspan="9" class="muted-meta">No matching films found.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="muted-meta">No matching films found.</td></tr>`;
     return;
   }
 
@@ -2170,7 +2171,6 @@ function renderBellComparisonTable(filteredFilms) {
       (f) => `
       <tr>
         <td><strong>#${f.final_rank}</strong></td>
-        <td>${formatRankChangeBadge(f)}</td>
         <td>Top ${(100 - f.percentile).toFixed(1)}%</td>
         <td>
           <a href="${escapeHtml(f.letterboxd_uri)}" target="_blank" rel="noopener noreferrer" class="film-row-title">
@@ -2191,7 +2191,7 @@ function renderBellComparisonTable(filteredFilms) {
     const rem = filteredFilms.length - limit;
     html += `
       <tr>
-        <td colspan="9" style="text-align: center; padding: 12px;">
+        <td colspan="8" style="text-align: center; padding: 12px;">
           <button type="button" class="btn btn-secondary btn-sm" id="step3LoadMoreBtn">
             Show Next ${Math.min(500, rem)} (${rem} remaining)
           </button>
@@ -2387,10 +2387,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById("tournamentStartBtn").addEventListener("click", () => {
     if (!state.session || state.session.bell_curve.films.length < 2) {
-      showError("Load at least two movies to start a tournament.");
+      showTournamentError("Load at least two movies to start a tournament.");
       return;
     }
     showError(null);
+    showTournamentError(null);
     state.tournamentApplied = null;
     state.tournament = TournamentSort.start(
       state.session.username, state.session.bell_curve.films.map((film) => film.slug)
@@ -2404,10 +2405,11 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       window.localStorage.removeItem(tournamentDraftKey(state.tournament.username));
     } catch (err) {
-      showError(`Could not discard saved tournament: ${err.message}`);
+      showTournamentError(`Could not discard saved tournament: ${err.message}`);
       return;
     }
     state.tournament = null;
+    showTournamentError(null);
     renderTournament();
   });
 

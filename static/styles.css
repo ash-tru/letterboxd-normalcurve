@@ -517,10 +517,6 @@ select:focus, .search-input:focus {
 .kpi-pill {
   font-size: 0.82rem;
   color: var(--text-secondary);
-  background: var(--bg-main);
-  border: 1px solid var(--border-subtle);
-  padding: 4px 10px;
-  border-radius: var(--radius-sm);
 }
 
 /* Add Movie Mode (Default Experience) */
@@ -597,7 +593,11 @@ select:focus, .search-input:focus {
 .profile-setup {
   max-width: 920px;
   margin: 0 auto;
-  padding: 28px;
+  padding: 12px 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .profile-setup-kicker {
@@ -1214,10 +1214,6 @@ select:focus, .search-input:focus {
 }
 
 .changed-only-toggle {
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  padding: 7px 12px;
-  border-radius: var(--radius-sm);
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -1251,6 +1247,21 @@ select:focus, .search-input:focus {
   gap: 10px;
   flex-wrap: wrap;
   min-width: 0;
+}
+
+#tournamentSortSubpanel {
+  position: relative;
+}
+
+.tournament-notice {
+  position: absolute;
+  z-index: 5;
+  top: 48px;
+  left: 50%;
+  width: min(600px, calc(100% - 24px));
+  transform: translateX(-50%);
+  box-shadow: var(--shadow-card);
+  pointer-events: none;
 }
 
 #tournamentStatus h4 {
@@ -1929,13 +1940,13 @@ body.is-sorting-drag * {
   left: 0;
   z-index: 9999;
   pointer-events: none;
-  background: var(--text-primary);
-  border: 1px solid var(--text-primary);
-  color: var(--bg-main);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  color: var(--text-primary);
   padding: 8px 14px;
   border-radius: 999px;
   font-size: 0.84rem;
-  box-shadow: 0 8px 24px rgba(20, 20, 19, 0.22);
+  box-shadow: var(--shadow-card);
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -1946,12 +1957,12 @@ body.is-sorting-drag * {
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #f59e0b;
+  color: var(--lb-orange);
   font-weight: 700;
 }
 
 .drag-floating-ghost .ghost-target {
-  color: #86efac;
+  color: var(--lb-green);
   font-weight: 700;
 }
 
@@ -2228,10 +2239,6 @@ body.is-sorting-drag * {
 
   .card {
     padding: 12px;
-  }
-
-  .profile-setup {
-    padding: 18px 14px;
   }
 
   .profile-setup .btn {
