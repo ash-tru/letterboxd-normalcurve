@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Letterbox Bell Curve</title>
-  <meta name="application-name" content="Letterbox Bell Curve" />
-  <meta name="apple-mobile-web-app-title" content="Letterbox Bell Curve" />
+  <title>Normal Curve</title>
+  <meta name="application-name" content="Normal Curve" />
+  <meta name="apple-mobile-web-app-title" content="Normal Curve" />
   <meta name="theme-color" content="#14181c" />
-  <meta property="og:title" content="Letterbox Bell Curve" />
-  <meta property="og:site_name" content="Letterbox Bell Curve" />
+  <meta property="og:title" content="Normal Curve" />
+  <meta property="og:site_name" content="Normal Curve" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
@@ -18,7 +18,7 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=4" />
   <link rel="shortcut icon" href="/favicon.svg?v=4" />
   <link rel="apple-touch-icon" href="/favicon.svg?v=4" />
-  <link rel="stylesheet" href="/styles.css?v=61" />
+  <link rel="stylesheet" href="/styles.css?v=67" />
 </head>
 <body>
   <header class="topbar">
@@ -26,7 +26,7 @@
       <div class="topbar-left">
         <div class="brand">
           <svg
-            class="brand-bell-logo"
+            class="brand-normal-logo"
             viewBox="0 0 60 24"
             width="46"
             height="19"
@@ -35,47 +35,47 @@
           >
             <defs>
               <path
-                id="bellAreaPath"
+                id="normalAreaPath"
                 d="M 2 20 C 11 20, 15.5 16.5, 20.5 10.5 C 24.2 6, 27 3.8, 30 3.8 C 33 3.8, 35.8 6, 39.5 10.5 C 44.5 16.5, 49 20, 58 20 Z"
               />
               <path
-                id="bellStrokePath"
+                id="normalStrokePath"
                 d="M 2 20 C 11 20, 15.5 16.5, 20.5 10.5 C 24.2 6, 27 3.8, 30 3.8 C 33 3.8, 35.8 6, 39.5 10.5 C 44.5 16.5, 49 20, 58 20"
               />
-              <clipPath id="bellSegLeft">
+              <clipPath id="normalSegLeft">
                 <rect x="0" y="0" width="19" height="24" />
               </clipPath>
-              <clipPath id="bellSegCenter">
+              <clipPath id="normalSegCenter">
                 <rect x="21" y="0" width="18" height="24" />
               </clipPath>
-              <clipPath id="bellSegRight">
+              <clipPath id="normalSegRight">
                 <rect x="41" y="0" width="19" height="24" />
               </clipPath>
             </defs>
-            <!-- Soft shaded bell segments -->
-            <use href="#bellAreaPath" clip-path="url(#bellSegLeft)" fill="#ff8000" fill-opacity="0.32" />
-            <use href="#bellAreaPath" clip-path="url(#bellSegCenter)" fill="#00e054" fill-opacity="0.32" />
-            <use href="#bellAreaPath" clip-path="url(#bellSegRight)" fill="#40bcf4" fill-opacity="0.32" />
-            <!-- Crisp 3-segment Bell Curve top line -->
+            <!-- Soft shaded normal segments -->
+            <use href="#normalAreaPath" clip-path="url(#normalSegLeft)" fill="#ff8000" fill-opacity="0.32" />
+            <use href="#normalAreaPath" clip-path="url(#normalSegCenter)" fill="#00e054" fill-opacity="0.32" />
+            <use href="#normalAreaPath" clip-path="url(#normalSegRight)" fill="#40bcf4" fill-opacity="0.32" />
+            <!-- Crisp 3-segment normal curve top line -->
             <use
-              href="#bellStrokePath"
-              clip-path="url(#bellSegLeft)"
+              href="#normalStrokePath"
+              clip-path="url(#normalSegLeft)"
               fill="none"
               stroke="#ff8000"
               stroke-width="2.6"
               stroke-linecap="round"
             />
             <use
-              href="#bellStrokePath"
-              clip-path="url(#bellSegCenter)"
+              href="#normalStrokePath"
+              clip-path="url(#normalSegCenter)"
               fill="none"
               stroke="#00e054"
               stroke-width="2.6"
               stroke-linecap="round"
             />
             <use
-              href="#bellStrokePath"
-              clip-path="url(#bellSegRight)"
+              href="#normalStrokePath"
+              clip-path="url(#normalSegRight)"
               fill="none"
               stroke="#40bcf4"
               stroke-width="2.6"
@@ -86,7 +86,7 @@
             <line x1="21" y1="21" x2="39" y2="21" stroke="#00e054" stroke-width="1.2" stroke-opacity="0.55" />
             <line x1="41" y1="21" x2="58" y2="21" stroke="#40bcf4" stroke-width="1.2" stroke-opacity="0.55" />
           </svg>
-          <h1 class="brand-title">Letterbox Bell Curve</h1>
+          <h1 class="brand-title">Normal Curve</h1>
         </div>
 
         <!-- Primary App Mode Switcher on the Left: Add Movie vs Full List Mode -->
@@ -166,19 +166,30 @@
 
     <div id="errorBanner" class="alert alert-error hidden"></div>
 
-    <dialog id="unratedDialog" class="unrated-dialog" aria-labelledby="unratedDialogTitle">
+    <dialog id="unratedDialog" class="app-dialog" aria-lanormaledby="unratedDialogTitle">
       <form method="dialog">
         <h2 id="unratedDialogTitle">Unrated films found</h2>
         <p id="unratedDialogMessage"></p>
-        <div class="unrated-dialog-actions">
+        <div class="app-dialog-actions">
           <button type="submit" value="exclude" class="btn btn-secondary">Exclude unrated</button>
           <button type="submit" value="include" class="btn btn-primary">Include unrated</button>
         </div>
       </form>
     </dialog>
 
+    <dialog id="confirmDialog" class="app-dialog" aria-lanormaledby="confirmDialogTitle" aria-describedby="confirmDialogMessage">
+      <form method="dialog">
+        <h2 id="confirmDialogTitle"></h2>
+        <p id="confirmDialogMessage"></p>
+        <div class="app-dialog-actions">
+          <button type="submit" value="cancel" class="btn btn-secondary">Cancel</button>
+          <button type="submit" value="confirm" class="btn btn-primary" id="confirmDialogAction"></button>
+        </div>
+      </form>
+    </dialog>
+
     <!-- ================================================================== -->
-    <!-- DEFAULT MODE: ADD MOVIE (BINARY SEARCH A vs B -> BELL CURVE RATE)  -->
+    <!-- DEFAULT MODE: ADD MOVIE (BINARY SEARCH A vs B -> NORMAL CURVE RATE)  -->
     <!-- ================================================================== -->
     <section id="addMovieModeSection">
       <div id="addMovieEmptyState" class="empty-state">
@@ -187,7 +198,7 @@
 
       <div id="profileSetupPage" class="profile-setup hidden">
         <span class="profile-setup-kicker">Your starting point</span>
-        <h2>Your ratings don't match the bell curve yet</h2>
+        <h2>Your ratings don't match the normal curve yet</h2>
         <p id="profileSetupSummary"></p>
         <p>Open Full List Mode to sort your movies and see their target ratings. Sorting alone won't change your Letterboxd ratings; update them on Letterboxd, then re-sync your profile here to check again.</p>
         <div class="profile-setup-actions">
@@ -206,10 +217,10 @@
             <h3>Current vs target ratings</h3>
             <div class="chart-legend">
               <span class="legend-item"><i class="swatch swatch-orig"></i> Original</span>
-              <span class="legend-item"><i class="swatch swatch-bell"></i> Bell Curve</span>
+              <span class="legend-item"><i class="swatch swatch-normal"></i> Normal Curve</span>
             </div>
           </div>
-          <div id="profileSetupChart" class="bell-chart"></div>
+          <div id="profileSetupChart" class="normal-chart"></div>
         </div>
       </div>
 
@@ -217,7 +228,7 @@
       <div id="addMovieEntryCard" class="card add-entry-card hidden">
         <form id="addMovieForm" class="add-movie-form">
           <div class="add-field add-field-movie">
-            <label for="newMovieInput">Movie to Rate &amp; Add to Bell Curve</label>
+            <label for="newMovieInput">Movie to Rate &amp; Add to Normal Curve</label>
             <input
               type="text"
               id="newMovieInput"
@@ -293,7 +304,7 @@
 
         <div class="add-adjustments-section">
           <div class="adjustments-header">
-            <h4 id="adjustmentsHeading">Movies to Adjust to Keep Your Bell Curve</h4>
+            <h4 id="adjustmentsHeading">Movies to Adjust to Keep Your Normal Curve</h4>
             <label class="toggle-switch" id="showAllPreexistingWrap">
               <input type="checkbox" id="showAllPreexistingToggle" />
               <span>Include pre-existing profile mismatches</span>
@@ -322,7 +333,7 @@
     </section>
 
     <!-- ================================================================== -->
-    <!-- FULL LIST MODE: SORT MOVIES + BELL CURVE TABLE                     -->
+    <!-- FULL LIST MODE: SORT MOVIES + NORMAL CURVE TABLE                     -->
     <!-- ================================================================== -->
     <div id="workspace" class="hidden">
       <!-- Primary 2-View Bar (Full Width) -->
@@ -331,8 +342,8 @@
           <button type="button" class="primary-step-btn active" data-step="step2" data-mobile-label="Sort Movies">
             1. Sort Movies
           </button>
-          <button type="button" class="primary-step-btn" data-step="step3" data-mobile-label="Bell Curve Table">
-            2. Bell Curve Table
+          <button type="button" class="primary-step-btn" data-step="step3" data-mobile-label="Normal Curve Table">
+            2. Normal Curve Table
           </button>
         </div>
       </div>
@@ -368,7 +379,7 @@
             <span>Rank</span>
             <span>Film</span>
             <span>Original</span>
-            <span>Bell Target</span>
+            <span>Normal Target</span>
             <span>Controls</span>
           </div>
 
@@ -484,20 +495,20 @@
       </section>
 
       <!-- ================================================================ -->
-      <!-- VIEW 2: BELL CURVE & FULL RANKED COMPARISON TABLE                -->
+      <!-- VIEW 2: NORMAL CURVE & FULL RANKED COMPARISON TABLE                -->
       <!-- ================================================================ -->
       <section id="step3Panel" class="step-panel hidden">
-        <!-- Compact Bell Curve Histogram + Sliders -->
-        <div class="bell-layout">
+        <!-- Compact Normal Curve Histogram + Sliders -->
+        <div class="normal-layout">
           <div class="chart-card">
             <div class="chart-card-header">
-              <div id="bellKpiGrid" class="kpi-inline"></div>
+              <div id="normalKpiGrid" class="kpi-inline"></div>
               <div class="chart-legend">
                 <span class="legend-item"><i class="swatch swatch-orig"></i> Original</span>
-                <span class="legend-item"><i class="swatch swatch-bell"></i> Bell Curve</span>
+                <span class="legend-item"><i class="swatch swatch-normal"></i> Normal Curve</span>
               </div>
             </div>
-            <div id="bellCurveChart" class="bell-chart"></div>
+            <div id="normalCurveChart" class="normal-chart"></div>
           </div>
 
           <div class="params-card">
@@ -512,13 +523,16 @@
             <div class="slider-group">
               <div class="slider-label">
                 <label for="stdSlider">Spread (&sigma;)</label>
-                <strong id="stdValueDisplay">1.00&starf;</strong>
+                <strong id="stdValueDisplay">1.20&starf;</strong>
               </div>
-              <input type="range" id="stdSlider" min="0.55" max="1.60" step="0.05" value="1.00" />
+              <input type="range" id="stdSlider" min="0.55" max="1.60" step="0.05" value="1.20" />
             </div>
 
             <button type="button" class="btn btn-ghost btn-sm btn-block" id="resetCurveParamsBtn">
-              Reset (2.75&starf;, &sigma;=1.0)
+              Reset to Recommended (2.75&starf;, &sigma;=1.2)
+            </button>
+            <button type="button" class="btn btn-ghost btn-sm btn-block" id="standardCurveParamsBtn">
+              Reset to Standard Normal Distribution (2.75&starf;, &sigma;=1.0)
             </button>
 
             <div class="bucket-AllocationTableWrap">
@@ -528,7 +542,7 @@
                     <th>Tier</th>
                     <th>Share</th>
                     <th>Orig</th>
-                    <th>Bell</th>
+                    <th>Normal</th>
                   </tr>
                 </thead>
                 <tbody></tbody>
@@ -540,7 +554,7 @@
         <!-- Filter Bar for Full Comparison Table -->
         <div class="toolbar step3-toolbar">
           <div class="step3-filters">
-            <label class="toggle-switch changed-only-toggle" title="Show only films whose bell-curve rating differs from your current Letterboxd rating">
+            <label class="toggle-switch changed-only-toggle" title="Show only films whose normal-curve rating differs from your current Letterboxd rating">
               <input type="checkbox" id="step3OnlyChangedToggle" />
               <span>Only Changed Ratings</span>
             </label>
@@ -554,7 +568,7 @@
         </div>
 
         <!-- Full Ranked Comparison Table -->
-        <div id="bellTableContainer" class="table-card">
+        <div id="normalTableContainer" class="table-card">
           <div class="table-responsive">
             <table class="comparison-table">
               <thead>
@@ -563,13 +577,13 @@
                   <th>Percentile</th>
                   <th>Movie</th>
                   <th>Original Rating</th>
-                  <th>Bell-Curve Rating</th>
+                  <th>Normal-Curve Rating</th>
                   <th>Rating Delta (&Delta;)</th>
                   <th>Continuous Score</th>
                   <th>Z-Score</th>
                 </tr>
               </thead>
-              <tbody id="bellTableBody"></tbody>
+              <tbody id="normalTableBody"></tbody>
             </table>
           </div>
         </div>
@@ -578,6 +592,6 @@
   </main>
 
   <script src="/tournament.js?v=3"></script>
-  <script src="/app.js?v=56"></script>
+  <script src="/app.js?v=65"></script>
 </body>
 </html>

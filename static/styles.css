@@ -76,7 +76,7 @@ h1, h2, h3, h4 {
   gap: 10px;
 }
 
-.brand-bell-logo {
+.brand-normal-logo {
   display: block;
   flex-shrink: 0;
 }
@@ -352,7 +352,7 @@ select:focus, .search-input:focus {
   color: var(--lb-green);
 }
 
-.unrated-dialog {
+.app-dialog {
   position: fixed;
   inset: 50% auto auto 50%;
   transform: translate(-50%, -50%);
@@ -368,21 +368,21 @@ select:focus, .search-input:focus {
   box-shadow: var(--shadow-card);
 }
 
-.unrated-dialog::backdrop {
+.app-dialog::backdrop {
   background: rgba(0, 0, 0, 0.65);
 }
 
-.unrated-dialog h2 {
+.app-dialog h2 {
   font-size: 1.2rem;
   margin-bottom: 12px;
 }
 
-.unrated-dialog p {
+.app-dialog p {
   color: var(--text-secondary);
   margin-bottom: 20px;
 }
 
-.unrated-dialog-actions {
+.app-dialog-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
@@ -593,7 +593,7 @@ select:focus, .search-input:focus {
 .profile-setup {
   max-width: 920px;
   margin: 0 auto;
-  padding: 12px 0;
+  padding: 24px 0 32px;
   background: transparent;
   border: 0;
   border-radius: 0;
@@ -601,34 +601,46 @@ select:focus, .search-input:focus {
 }
 
 .profile-setup-kicker {
+  display: block;
   color: var(--lb-green);
   font-size: 0.75rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+  margin-bottom: 10px;
 }
 
 .profile-setup h2 {
-  margin: 7px 0 10px;
+  margin: 0 0 16px;
   font-size: clamp(1.35rem, 3vw, 2rem);
+  line-height: 1.25;
 }
 
 .profile-setup p {
-  max-width: 65ch;
-  margin-bottom: 12px;
+  max-width: 76ch;
+  line-height: 1.7;
   color: var(--text-secondary);
+}
+
+.profile-setup #profileSetupSummary:empty {
+  display: none;
+}
+
+.profile-setup #profileSetupSummary:not(:empty) {
+  margin-bottom: 12px;
 }
 
 .profile-setup-actions {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
+  gap: 10px;
+  margin-top: 22px;
 }
 
 .profile-setup-chart {
-  margin-top: 24px;
-  padding-top: 18px;
+  margin-top: 32px;
+  padding-top: 24px;
   border-top: 1px solid var(--border-subtle);
 }
 
@@ -960,7 +972,7 @@ select:focus, .search-input:focus {
 
 .sort-list-legend {
   display: grid;
-  grid-template-columns: 82px 1fr 130px 165px 285px;
+  grid-template-columns: 82px minmax(0, 1fr) 130px 165px 170px;
   gap: 12px;
   padding: 8px 14px;
   font-size: 0.74rem;
@@ -1041,7 +1053,7 @@ select:focus, .search-input:focus {
 
 .sort-row {
   display: grid;
-  grid-template-columns: 82px 1fr 130px 165px 285px;
+  grid-template-columns: 82px minmax(0, 1fr) 130px 165px 170px;
   gap: 12px;
   align-items: center;
   background: var(--bg-card);
@@ -1070,6 +1082,23 @@ select:focus, .search-input:focus {
 
 .sort-row.drag-over-bottom {
   border-bottom: 2px solid var(--lb-blue);
+}
+
+.tier-separator.drag-rating-destination .tier-separator-badge {
+  box-shadow: 0 0 0 3px rgba(0, 224, 84, 0.3);
+}
+
+.tier-separator.drag-drop-before {
+  border-bottom-color: var(--lb-blue);
+  box-shadow: 0 3px 0 var(--lb-blue);
+}
+
+.sort-row.drag-rating-up {
+  border-color: var(--lb-green);
+}
+
+.sort-row.drag-rating-down {
+  border-color: var(--lb-orange);
 }
 
 .rank-cell {
@@ -1152,7 +1181,7 @@ select:focus, .search-input:focus {
   color: var(--text-secondary);
 }
 
-.bell-preview-pill {
+.normal-preview-pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1624,7 +1653,7 @@ kbd {
   justify-content: center;
 }
 
-/* Step 3: KPI Cards & Bell Curve Layout */
+/* Step 3: KPI Cards & Normal Curve Layout */
 .kpi-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(195px, 1fr));
@@ -1658,7 +1687,7 @@ kbd {
   margin-top: 2px;
 }
 
-.bell-layout {
+.normal-layout {
   display: grid;
   grid-template-columns: 1.65fr 1fr;
   gap: 18px;
@@ -1694,10 +1723,10 @@ kbd {
   display: inline-block;
 }
 .swatch-orig { background: var(--lb-blue); }
-.swatch-bell { background: var(--lb-green); }
+.swatch-normal { background: var(--lb-green); }
 
-/* Dual Bar Bell Chart */
-.bell-chart {
+/* Dual Bar Normal Chart */
+.normal-chart {
   display: grid;
   grid-template-columns: repeat(10, 1fr);
   gap: 10px;
@@ -1706,7 +1735,7 @@ kbd {
   padding: 20px 8px 8px;
 }
 
-.bell-col {
+.normal-col {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1714,7 +1743,7 @@ kbd {
   justify-content: flex-end;
 }
 
-.bell-bars-pair {
+.normal-bars-pair {
   display: flex;
   align-items: flex-end;
   justify-content: center;
@@ -1749,7 +1778,7 @@ kbd {
   transition: height 0.25s ease;
 }
 
-.bar-bell {
+.bar-normal {
   width: 100%;
   background: var(--lb-green);
   border-radius: 2px 2px 0 0;
@@ -1757,14 +1786,14 @@ kbd {
   transition: height 0.25s ease;
 }
 
-.bell-col-label {
+.normal-col-label {
   margin-top: 8px;
   font-size: 0.8rem;
   font-weight: 700;
   color: var(--lb-orange);
 }
 
-.bell-col-sub {
+.normal-col-sub {
   font-size: 0.68rem;
   color: var(--text-muted);
 }
@@ -1835,20 +1864,20 @@ kbd {
   flex: 1 1 0;
 }
 
-.bell-shelves {
+.normal-shelves {
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
-.bell-shelf {
+.normal-shelf {
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   padding: 16px 18px;
 }
 
-.bell-shelf-header {
+.normal-shelf-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1944,13 +1973,36 @@ body.is-sorting-drag * {
   border: 1px solid var(--border-strong);
   color: var(--text-primary);
   padding: 8px 14px;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   font-size: 0.84rem;
   box-shadow: var(--shadow-card);
-  display: inline-flex;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  max-width: min(360px, calc(100vw - 16px));
+}
+
+.ghost-main {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  white-space: nowrap;
+  gap: 6px;
+}
+
+.ghost-shifts {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.76rem;
+  color: var(--text-secondary);
+}
+
+.ghost-shift.drag-shift-up {
+  color: var(--lb-green);
+}
+
+.ghost-shift.drag-shift-down {
+  color: var(--lb-orange);
 }
 
 .drag-floating-ghost .ghost-tag {
@@ -1979,7 +2031,7 @@ body.is-sorting-drag * {
 }
 
 @media (max-width: 960px) {
-  .bell-layout {
+  .normal-layout {
     grid-template-columns: 1fr;
   }
   .sort-list-legend {
@@ -1989,7 +2041,7 @@ body.is-sorting-drag * {
     grid-template-columns: auto minmax(0, 1fr) auto auto;
     grid-template-rows: auto auto;
     grid-template-areas:
-      "rank film orig bell"
+      "rank film orig normal"
       "rank film controls controls";
     column-gap: 8px;
     row-gap: 5px;
@@ -2002,8 +2054,8 @@ body.is-sorting-drag * {
     justify-self: end;
     white-space: nowrap;
   }
-  .bell-rating-cell {
-    grid-area: bell;
+  .normal-rating-cell {
+    grid-area: normal;
     justify-self: end;
     white-space: nowrap;
   }
@@ -2106,7 +2158,7 @@ body.is-sorting-drag * {
     white-space: nowrap;
   }
 
-  .brand-bell-logo {
+  .brand-normal-logo {
     width: 36px;
   }
 
@@ -2241,13 +2293,17 @@ body.is-sorting-drag * {
     padding: 12px;
   }
 
+  .profile-setup {
+    padding: 18px 0 24px;
+  }
+
   .profile-setup .btn {
     width: 100%;
     white-space: normal;
   }
 
   .profile-setup-chart {
-    margin-top: 18px;
+    margin-top: 24px;
   }
 
   .saved-sessions {
@@ -2489,7 +2545,7 @@ body.is-sorting-drag * {
     grid-template-columns: auto minmax(0, 1fr) auto auto;
     grid-template-rows: auto auto;
     grid-template-areas:
-      "rank film orig bell"
+      "rank film orig normal"
       "rank film controls controls";
     column-gap: 6px;
     row-gap: 4px;
@@ -2526,7 +2582,7 @@ body.is-sorting-drag * {
   }
 
   .orig-rating-cell,
-  .bell-rating-cell {
+  .normal-rating-cell {
     font-size: 0.72rem;
     background: var(--bg-main);
     padding: 2px 6px;
@@ -2559,14 +2615,14 @@ body.is-sorting-drag * {
     height: 26px;
   }
 
-  /* Bell Curve Chart & Comparison Table on Portrait Mobile */
-  .bell-chart {
+  /* Normal Curve Chart & Comparison Table on Portrait Mobile */
+  .normal-chart {
     gap: 4px;
     height: 190px;
     padding: 12px 2px 6px;
   }
 
-  .bell-bars-pair {
+  .normal-bars-pair {
     height: 135px;
     gap: 2px;
   }
@@ -2575,12 +2631,12 @@ body.is-sorting-drag * {
     font-size: 0.62rem;
   }
 
-  .bell-col-label {
+  .normal-col-label {
     font-size: 0.62rem;
     letter-spacing: -0.5px;
   }
 
-  .bell-col-sub {
+  .normal-col-sub {
     display: none;
   }
 
@@ -2604,7 +2660,7 @@ body.is-sorting-drag * {
     gap: 5px;
   }
 
-  .brand-bell-logo {
+  .brand-normal-logo {
     width: 32px;
   }
 

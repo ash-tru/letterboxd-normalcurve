@@ -1,4 +1,4 @@
-"""Web server and REST API for the Letterboxd Bell-Curve Ranker (eggs/ltrbx)."""
+"""Web server and REST API for Normal Curve (eggs/ltrbx)."""
 
 from __future__ import annotations
 
@@ -15,8 +15,9 @@ from typing import Any
 import tornado.ioloop
 import tornado.web
 from letterboxd import (
-    compute_bell_curve_assignments,
-    export_bell_curve_csv,
+    DEFAULT_STD_DEV,
+    compute_normal_curve_assignments,
+    export_normal_curve_csv,
     fetch_user_watched_films,
     format_stars,
     generate_svg_poster,
@@ -49,10 +50,10 @@ def build_session_payload(
     include_unrated: bool = True,
     manual_order_slugs: list[str] | None = None,
     mean: float = 2.75,
-    std_dev: float = 1.0,
+    std_dev: float = DEFAULT_STD_DEV,
     comparisons_done: int = 0,
 ) -> dict[str, Any]:
-    """Build complete session state including initial rating sort, manual sort, and bell curve."""
+    """Build complete session state including initial rating sort, manual sort, and normal curve."""
     all_films = raw_profile.get("films", [])
     rating_sorted = sort_films_by_rating(all_films, include_unrated=include_unrated)
 
@@ -82,7 +83,7 @@ def build_session_payload(
     else:
         manual_sorted = [dict(f) for f in rating_sorted]
 
-    bell_curve = compute_bell_curve_assignments(
+    normal_curve = compute_normal_curve_assignments(
         manual_sorted,
         mean=mean,
         std_dev=std_dev,
@@ -106,7 +107,7 @@ def build_session_payload(
         },
         "raw_films": all_films,
         "rating_sorted_films": rating_sorted,
-        "bell_curve": bell_curve,
+        "normal_curve": normal_curve,
     }
 
 
@@ -129,11 +130,11 @@ def process_lookup_sync(body: dict[str, Any]) -> tuple[dict[str, Any], int]:
 
     prev_slugs = body.get("ordered_slugs") if isinstance(body.get("ordered_slugs"), list) else None
     prev_settings = (existing or {}).get("settings", {})
-    if not prev_slugs and existing and existing.get("bell_curve", {}).get("films"):
-        prev_slugs = [f["slug"] for f in existing["bell_curve"]["films"]]
+    if not prev_slugs and existing and existing.get("normal_curve", {}).get("films"):
+        prev_slugs = [f["slug"] for f in existing["normal_curve"]["films"]]
 
     mean = float(body.get("mean", prev_settings.get("mean", 2.75)))
-    std_dev = float(body.get("std_dev", prev_settings.get("std_dev", 1.0)))
+    std_dev = float(body.get("std_dev", prev_settings.get("std_dev", DEFAULT_STD_DEV)))
     comparisons_done = int(body.get("comparisons_done", prev_settings.get("comparisons_done", 0)))
 
     try:
@@ -156,7 +157,7 @@ def process_lookup_sync(body: dict[str, Any]) -> tuple[dict[str, Any], int]:
 
 
 def process_save_order(body: dict[str, Any]) -> tuple[dict[str, Any], int]:
-    """Update manual sort, added film, or bell-curve settings in cloud/disk storage."""
+    """Update manual sort, added film, or normal-curve settings in cloud/disk storage."""
     raw_username = str(body.get("username") or "").strip()
     try:
         username = normalize_username(raw_username)
@@ -170,7 +171,7 @@ def process_save_order(body: dict[str, Any]) -> tuple[dict[str, Any], int]:
     settings = existing.get("settings", {})
     include_unrated = bool(body.get("include_unrated", settings.get("include_unrated", True)))
     mean = float(body.get("mean", settings.get("mean", 2.75)))
-    std_dev = float(body.get("std_dev", settings.get("std_dev", 1.0)))
+    std_dev = float(body.get("std_dev", settings.get("std_dev", DEFAULT_STD_DEV)))
     comparisons_done = int(body.get("comparisons_done", settings.get("comparisons_done", 0)))
     reset_to_rating_sort = bool(body.get("reset_to_rating_sort", False))
 
@@ -219,8 +220,8 @@ def process_save_order(body: dict[str, Any]) -> tuple[dict[str, Any], int]:
         comparisons_done = 0
     else:
         ordered_slugs = body.get("ordered_slugs")
-        if ordered_slugs is None and existing.get("bell_curve", {}).get("films"):
-            ordered_slugs = [f["slug"] for f in existing["bell_curve"]["films"]]
+        if ordered_slugs is None and existing.get("normal_curve", {}).get("films"):
+            ordered_slugs = [f["slug"] for f in existing["normal_curve"]["films"]]
 
     rated_count = sum(1 for f in raw_films if f.get("original_rating") is not None)
     raw_profile = {
@@ -366,8 +367,8 @@ class LookupHandler(BaseJsonHandler):
                     else None
                 )
                 prev_settings: dict[str, Any] = (existing or {}).get("settings", {})
-                if not prev_slugs and existing and existing.get("bell_curve", {}).get("films"):
-                    prev_slugs = [f["slug"] for f in existing["bell_curve"]["films"]]
+                if not prev_slugs and existing and existing.get("normal_curve", {}).get("films"):
+                    prev_slugs = [f["slug"] for f in existing["normal_curve"]["films"]]
 
                 profile = fetch_user_watched_films(
                     username=username,
@@ -379,7 +380,7 @@ class LookupHandler(BaseJsonHandler):
                     include_unrated=include_unrated,
                     manual_order_slugs=prev_slugs,
                     mean=float(prev_settings.get("mean", 2.75)),
-                    std_dev=float(prev_settings.get("std_dev", 1.0)),
+                    std_dev=float(prev_settings.get("std_dev", DEFAULT_STD_DEV)),
                     comparisons_done=int(prev_settings.get("comparisons_done", 0)),
                 )
                 save_user_session(username, session_payload)
@@ -411,7 +412,7 @@ class JobStatusHandler(BaseJsonHandler):
 
 
 class SaveOrderHandler(BaseJsonHandler):
-    """POST /api/save-order - update manual sort, added film, or bell-curve settings."""
+    """POST /api/save-order - update manual sort, added film, or normal-curve settings."""
 
     def post(self) -> None:
         body = self.get_json_body()
@@ -429,7 +430,7 @@ class ImportCsvHandler(BaseJsonHandler):
 
 
 class ExportCsvHandler(BaseJsonHandler):
-    """GET /api/export-csv/<username> - download CSV of bell-curve ratings."""
+    """GET /api/export-csv/<username> - download CSV of normal-curve ratings."""
 
     def get(self, username: str) -> None:
         try:
@@ -443,12 +444,12 @@ class ExportCsvHandler(BaseJsonHandler):
             self.write_json({"error": "Session not found"}, status=404)
             return
 
-        films = session.get("bell_curve", {}).get("films", [])
-        csv_data = export_bell_curve_csv(films)
+        films = session.get("normal_curve", {}).get("films", [])
+        csv_data = export_normal_curve_csv(films)
         self.set_header("Content-Type", "text/csv; charset=utf-8")
         self.set_header(
             "Content-Disposition",
-            f'attachment; filename="{clean}_letterboxd_bell_curve.csv"',
+            f'attachment; filename="{clean}_letterboxd_normal_curve.csv"',
         )
         self.finish(csv_data)
 
@@ -526,14 +527,14 @@ def make_app() -> tornado.web.Application:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Letterboxd Bell-Curve Ranker Server")
+    parser = argparse.ArgumentParser(description="Normal Curve server")
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8765")))
     parser.add_argument("--host", type=str, default="0.0.0.0")
     args = parser.parse_args()
 
     app = make_app()
     app.listen(args.port, address=args.host)
-    print(f"🎬 Letterboxd Bell-Curve Ranker running at http://localhost:{args.port}")
+    print(f"🎬 Normal Curve running at http://localhost:{args.port}")
     tornado.ioloop.IOLoop.current().start()
 
 

@@ -10,6 +10,7 @@ Supports (in priority order):
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 import urllib.error
@@ -28,6 +29,14 @@ except ImportError:
     BlobNotFoundError = FileNotFoundError  # type: ignore[assignment,misc]
 
 BASE_DIR = Path(__file__).resolve().parent
+logger = logging.getLogger(__name__)
+
+
+def _supported_session(session: dict[str, Any] | None, username: str) -> dict[str, Any] | None:
+    if session and "normal_curve" not in session:
+        logger.warning("Ignoring old-format saved profile for %s; it must be re-synced", username)
+        return None
+    return session
 
 
 def _get_kv_config() -> tuple[str, str] | None:
@@ -247,17 +256,17 @@ def load_user_session(username: str) -> dict[str, Any] | None:
         try:
             res = _kv_load_session(clean)
             if res:
-                return res
+                return _supported_session(res, clean)
         except Exception:
             pass
     if _is_blob_configured():
         try:
             res = _blob_load_session(clean)
             if res:
-                return res
+                return _supported_session(res, clean)
         except Exception:
             pass
-    return _disk_load_session(clean)
+    return _supported_session(_disk_load_session(clean), clean)
 
 
 def save_user_session(username: str, payload: dict[str, Any]) -> None:

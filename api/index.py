@@ -14,7 +14,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from letterboxd import (  # noqa: E402
-    export_bell_curve_csv,
+    export_normal_curve_csv,
     generate_svg_poster,
     normalize_username,
     resolve_fallback_poster_url,
@@ -119,13 +119,13 @@ class handler(BaseHTTPRequestHandler):  # noqa: N801
             if not session:
                 self._send_json({"error": "Session not found"}, status=404)
                 return
-            films = session.get("bell_curve", {}).get("films", [])
-            csv_bytes = export_bell_curve_csv(films).encode("utf-8")
+            films = session.get("normal_curve", {}).get("films", [])
+            csv_bytes = export_normal_curve_csv(films).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/csv; charset=utf-8")
             self.send_header(
                 "Content-Disposition",
-                f'attachment; filename="{clean}_letterboxd_bell_curve.csv"',
+                f'attachment; filename="{clean}_letterboxd_normal_curve.csv"',
             )
             self.send_header("Content-Length", str(len(csv_bytes)))
             self.end_headers()

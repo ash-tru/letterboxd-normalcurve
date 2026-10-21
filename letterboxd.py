@@ -1,4 +1,4 @@
-"""Letterboxd scraper, CSV importer/exporter, and Bell Curve rating engine."""
+"""Letterboxd scraper, CSV importer/exporter, and Normal Curve rating engine."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ import lxml.html
 
 MAX_FILMS_LIMIT = 10000
 MAX_PAGES_LIMIT = 139  # 139 * 72 = 10,008 films
+DEFAULT_STD_DEV = 1.2
 _THREAD_LOCAL = threading.local()
 
 # Slackbot & Discordbot run on AWS (same ASN as Vercel/Render) and are whitelisted
@@ -697,7 +698,7 @@ def sort_films_by_rating(
 
 
 # ---------------------------------------------------------------------------
-# Normal Distribution & Bell Curve Rating Assignment Engine
+# Normal Distribution & Normal Curve Rating Assignment Engine
 # ---------------------------------------------------------------------------
 
 def _norm_ppf(p: float) -> float:
@@ -755,7 +756,7 @@ def _norm_ppf(p: float) -> float:
     )
 
 
-def compute_bucket_probabilities(mean: float = 2.75, std_dev: float = 1.0) -> dict[float, float]:
+def compute_bucket_probabilities(mean: float = 2.75, std_dev: float = DEFAULT_STD_DEV) -> dict[float, float]:
     """Compute normalized Gaussian probabilities for each of the 10 star buckets (0.5..5.0)."""
     sigma = max(0.25, min(2.5, float(std_dev)))
     mu = max(0.5, min(5.0, float(mean)))
@@ -771,12 +772,12 @@ def compute_bucket_probabilities(mean: float = 2.75, std_dev: float = 1.0) -> di
 def allocate_bucket_counts(
     total_count: int,
     mean: float = 2.75,
-    std_dev: float = 1.0,
+    std_dev: float = DEFAULT_STD_DEV,
 ) -> dict[float, int]:
     """Allocate integer movie counts across 0.5..5.0 star buckets summing to total_count.
 
     When mean is symmetric (2.75), pairs (0.5, 5.0), (1.0, 4.5), etc. are allocated
-    symmetrically so the resulting bell curve is strictly symmetric.
+    symmetrically so the resulting normal curve is strictly symmetric.
     """
     if total_count <= 0:
         return {b: 0 for b in STAR_BUCKETS}
@@ -828,12 +829,12 @@ def allocate_bucket_counts(
     return floors
 
 
-def compute_bell_curve_assignments(
+def compute_normal_curve_assignments(
     sorted_films: list[dict[str, Any]],
     mean: float = 2.75,
-    std_dev: float = 1.0,
+    std_dev: float = DEFAULT_STD_DEV,
 ) -> dict[str, Any]:
-    """Assign each film in final user-sorted order (best -> worst) to its 0.5..5.0★ bell-curve tier."""
+    """Assign each film in final user-sorted order (best -> worst) to its 0.5..5.0★ normal-curve tier."""
     n = len(sorted_films)
     probs = compute_bucket_probabilities(mean=mean, std_dev=std_dev)
     bucket_counts = allocate_bucket_counts(n, mean=mean, std_dev=std_dev)
@@ -844,7 +845,7 @@ def compute_bell_curve_assignments(
         tier_sequence.extend([b] * bucket_counts[b])
 
     orig_dist: dict[str, int] = {f"{b:.1f}": 0 for b in STAR_BUCKETS}
-    bell_dist: dict[str, int] = {f"{b:.1f}": bucket_counts[b] for b in STAR_BUCKETS}
+    normal_dist: dict[str, int] = {f"{b:.1f}": bucket_counts[b] for b in STAR_BUCKETS}
 
     upgraded_count = 0
     downgraded_count = 0
@@ -852,13 +853,13 @@ def compute_bell_curve_assignments(
     unrated_count = 0
 
     orig_ratings_list: list[float] = []
-    bell_ratings_list: list[float] = []
+    normal_ratings_list: list[float] = []
 
     enriched_films: list[dict[str, Any]] = []
     for idx, film in enumerate(sorted_films):
         rank = idx + 1
-        bell_rating = tier_sequence[idx] if idx < len(tier_sequence) else 0.5
-        bell_ratings_list.append(bell_rating)
+        normal_rating = tier_sequence[idx] if idx < len(tier_sequence) else 0.5
+        normal_ratings_list.append(normal_rating)
 
         # Midpoint quantile from bottom (0) to top (1)
         quantile = (n - rank + 0.5) / n if n > 0 else 0.5
@@ -873,7 +874,7 @@ def compute_bell_curve_assignments(
             key = f"{orig_f:.1f}"
             if key in orig_dist:
                 orig_dist[key] += 1
-            delta = round(bell_rating - orig_f, 1)
+            delta = round(normal_rating - orig_f, 1)
             if delta > 0:
                 upgraded_count += 1
                 delta_status = "upgraded"
@@ -894,9 +895,9 @@ def compute_bell_curve_assignments(
                 "final_rank": rank,
                 "percentile": percentile,
                 "z_score": round(z_score, 2),
-                "continuous_bell_score": round(raw_continuous, 2),
-                "bell_rating": bell_rating,
-                "bell_stars": format_stars(bell_rating),
+                "continuous_normal_score": round(raw_continuous, 2),
+                "normal_rating": normal_rating,
+                "normal_stars": format_stars(normal_rating),
                 "original_stars": format_stars(orig),
                 "rating_delta": delta,
                 "delta_status": delta_status,
@@ -905,7 +906,7 @@ def compute_bell_curve_assignments(
         enriched_films.append(item)
 
     mean_orig = round(sum(orig_ratings_list) / len(orig_ratings_list), 2) if orig_ratings_list else None
-    mean_bell = round(sum(bell_ratings_list) / len(bell_ratings_list), 2) if bell_ratings_list else None
+    mean_normal = round(sum(normal_ratings_list) / len(normal_ratings_list), 2) if normal_ratings_list else None
 
     std_orig = (
         round(
@@ -915,12 +916,12 @@ def compute_bell_curve_assignments(
         if orig_ratings_list and mean_orig is not None
         else None
     )
-    std_bell = (
+    std_normal = (
         round(
-            math.sqrt(sum((x - mean_bell) ** 2 for x in bell_ratings_list) / len(bell_ratings_list)),
+            math.sqrt(sum((x - mean_normal) ** 2 for x in normal_ratings_list) / len(normal_ratings_list)),
             2,
         )
-        if bell_ratings_list and mean_bell is not None
+        if normal_ratings_list and mean_normal is not None
         else None
     )
 
@@ -933,7 +934,7 @@ def compute_bell_curve_assignments(
                 "label": STAR_LABELS[b],
                 "probability_pct": round(probs[b] * 100.0, 2),
                 "original_count": orig_dist[b_key],
-                "bell_count": bell_dist[b_key],
+                "normal_count": normal_dist[b_key],
             }
         )
 
@@ -942,11 +943,11 @@ def compute_bell_curve_assignments(
         "parameters": {"mean": mean, "std_dev": std_dev},
         "stats": {
             "mean_original": mean_orig,
-            "mean_bell": mean_bell,
+            "mean_normal": mean_normal,
             "std_original": std_orig,
-            "std_bell": std_bell,
-            "rating_inflation": round((mean_orig - mean_bell), 2)
-            if (mean_orig is not None and mean_bell is not None)
+            "std_normal": std_normal,
+            "rating_inflation": round((mean_orig - mean_normal), 2)
+            if (mean_orig is not None and mean_normal is not None)
             else None,
             "upgraded_count": upgraded_count,
             "downgraded_count": downgraded_count,
@@ -963,7 +964,7 @@ def parse_letterboxd_csv(
     username: str = "csv_import",
     resolve_remote: bool = False,
 ) -> dict[str, Any]:
-    """Parse a Letterboxd ratings.csv, watched.csv, or exported bell-curve CSV into the standard payload."""
+    """Parse a Letterboxd ratings.csv, watched.csv, or exported normal-curve CSV into the standard payload."""
     reader = csv.DictReader(io.StringIO(csv_content))
     films: list[FilmEntry] = []
 
@@ -1071,8 +1072,8 @@ def parse_letterboxd_csv(
     }
 
 
-def export_bell_curve_csv(enriched_films: list[dict[str, Any]]) -> str:
-    """Export bell-curve sorted films to a Letterboxd-compatible CSV (plus analysis columns)."""
+def export_normal_curve_csv(enriched_films: list[dict[str, Any]]) -> str:
+    """Export normal-curve sorted films to a Letterboxd-compatible CSV (plus analysis columns)."""
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(
@@ -1086,7 +1087,7 @@ def export_bell_curve_csv(enriched_films: list[dict[str, Any]]) -> str:
             "FinalRank",
             "Percentile",
             "ZScore",
-            "ContinuousBellScore",
+            "ContinuousNormalScore",
             "Slug",
             "FilmID",
             "PosterURL",
@@ -1098,13 +1099,13 @@ def export_bell_curve_csv(enriched_films: list[dict[str, Any]]) -> str:
                 film.get("title", ""),
                 film.get("year") or "",
                 film.get("letterboxd_uri", ""),
-                film.get("bell_rating", ""),
+                film.get("normal_rating", ""),
                 film.get("original_rating") if film.get("original_rating") is not None else "",
                 film.get("rating_delta") if film.get("rating_delta") is not None else "",
                 film.get("final_rank", ""),
                 film.get("percentile", ""),
                 film.get("z_score", ""),
-                film.get("continuous_bell_score", ""),
+                film.get("continuous_normal_score", ""),
                 film.get("slug", ""),
                 film.get("id", ""),
                 film.get("poster_url") or "",

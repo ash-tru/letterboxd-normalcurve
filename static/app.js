@@ -1,6 +1,9 @@
-/* LTRBX // Letterboxd Bell-Curve Ranker Frontend */
+/* LTRBX // Normal Curve Frontend */
 
 const STAR_BUCKETS = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0];
+const DEFAULT_CENTER = 2.75;
+const RECOMMENDED_SPREAD = 1.2;
+const STANDARD_SPREAD = 1.0;
 const STAR_LABELS = {
   "0.5": "½",
   "1.0": "★",
@@ -42,8 +45,8 @@ const state = {
     candidates: [],
     selectedCandidate: null,
     skipProfileSetup: false,
-    binary: null, // { film, others, low, high, mid, step, maxSteps, history, preInsertBellBySlug }
-    result: null, // { film, finalRank, totalAfter, bellRating, bellStars, boundaryAdjustments, preexistingAdjustments }
+    binary: null, // { film, others, low, high, mid, step, maxSteps, history, preInsertNormalBySlug }
+    result: null, // { film, finalRank, totalAfter, normalRating, normalStars, boundaryAdjustments, preexistingAdjustments }
     showAllPreexisting: false,
   },
 };
@@ -80,6 +83,18 @@ function formatDeltaBadge(delta, origRating) {
     return `<span class="delta-pill delta-down">${d.toFixed(1)}★</span>`;
   }
   return `<span class="delta-pill delta-same">&mdash;</span>`;
+}
+
+function applyCurvePreset(spread) {
+  if (!state.session) return;
+  state.session.settings.mean = DEFAULT_CENTER;
+  state.session.settings.std_dev = spread;
+  document.getElementById("meanSlider").value = DEFAULT_CENTER.toFixed(2);
+  document.getElementById("meanValueDisplay").textContent = `${DEFAULT_CENTER.toFixed(2)}★`;
+  document.getElementById("stdSlider").value = spread.toFixed(2);
+  document.getElementById("stdValueDisplay").textContent = `${spread.toFixed(2)}★`;
+  renderAll();
+  schedulePersistOrder();
 }
 
 // Acklam inverse standard normal CDF for client-side instant recalculation
@@ -125,12 +140,12 @@ function normPpf(p) {
   );
 }
 
-function recomputeBellCurveClientSide() {
-  if (!state.session || !state.session.bell_curve) return;
-  const films = state.session.bell_curve.films || [];
+function recomputeNormalCurveClientSide() {
+  if (!state.session || !state.session.normal_curve) return;
+  const films = state.session.normal_curve.films || [];
   const n = films.length;
-  const mean = Number(state.session.settings.mean || 2.75);
-  const stdDev = Number(state.session.settings.std_dev || 1.0);
+  const mean = Number(state.session.settings.mean ?? DEFAULT_CENTER);
+  const stdDev = Number(state.session.settings.std_dev ?? RECOMMENDED_SPREAD);
 
   // Compute Gaussian bucket weights
   const weights = {};
@@ -220,12 +235,12 @@ function recomputeBellCurveClientSide() {
   let unchanged = 0;
   let unrated = 0;
   const origVals = [];
-  const bellVals = [];
+  const normalVals = [];
 
   films.forEach((film, idx) => {
     const rank = idx + 1;
-    const bellRating = tierSeq[idx] !== undefined ? tierSeq[idx] : 0.5;
-    bellVals.push(bellRating);
+    const normalRating = tierSeq[idx] !== undefined ? tierSeq[idx] : 0.5;
+    normalVals.push(normalRating);
 
     const q = n > 0 ? (n - rank + 0.5) / n : 0.5;
     const z = normPpf(q);
@@ -235,16 +250,16 @@ function recomputeBellCurveClientSide() {
     film.final_rank = rank;
     film.percentile = pct;
     film.z_score = Number(z.toFixed(2));
-    film.continuous_bell_score = Number(cont.toFixed(2));
-    film.bell_rating = bellRating;
-    film.bell_stars = formatStars(bellRating);
+    film.continuous_normal_score = Number(cont.toFixed(2));
+    film.normal_rating = normalRating;
+    film.normal_stars = formatStars(normalRating);
 
     if (film.original_rating !== null && film.original_rating !== undefined) {
       const o = Number(film.original_rating);
       origVals.push(o);
       const ok = o.toFixed(1);
       if (origDist[ok] !== undefined) origDist[ok] += 1;
-      const delta = Number((bellRating - o).toFixed(1));
+      const delta = Number((normalRating - o).toFixed(1));
       film.rating_delta = delta;
       if (delta > 0) {
         upgraded += 1;
@@ -265,30 +280,30 @@ function recomputeBellCurveClientSide() {
 
   const avg = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
   const meanOrig = avg(origVals);
-  const meanBell = avg(bellVals);
+  const meanNormal = avg(normalVals);
 
-  state.session.bell_curve.total_films = n;
-  state.session.bell_curve.parameters = { mean, std_dev: stdDev };
-  state.session.bell_curve.stats = {
+  state.session.normal_curve.total_films = n;
+  state.session.normal_curve.parameters = { mean, std_dev: stdDev };
+  state.session.normal_curve.stats = {
     mean_original: meanOrig !== null ? Number(meanOrig.toFixed(2)) : null,
-    mean_bell: meanBell !== null ? Number(meanBell.toFixed(2)) : null,
+    mean_normal: meanNormal !== null ? Number(meanNormal.toFixed(2)) : null,
     rating_inflation:
-      meanOrig !== null && meanBell !== null
-        ? Number((meanOrig - meanBell).toFixed(2))
+      meanOrig !== null && meanNormal !== null
+        ? Number((meanOrig - meanNormal).toFixed(2))
         : null,
     upgraded_count: upgraded,
     downgraded_count: downgraded,
     unchanged_count: unchanged,
     unrated_count: unrated,
   };
-  state.session.bell_curve.buckets = STAR_BUCKETS.map((b) => {
+  state.session.normal_curve.buckets = STAR_BUCKETS.map((b) => {
     const k = b.toFixed(1);
     return {
       rating: b,
       label: STAR_LABELS[k],
       probability_pct: Number((probs[k] * 100).toFixed(2)),
       original_count: origDist[k] || 0,
-      bell_count: counts[k] || 0,
+      normal_count: counts[k] || 0,
     };
   });
 }
@@ -365,7 +380,7 @@ function schedulePersistOrder(addedFilm = null) {
   if (state.saveTimer) clearTimeout(state.saveTimer);
   state.saveTimer = setTimeout(async () => {
     try {
-      const slugs = state.session.bell_curve.films.map((f) => f.slug);
+      const slugs = state.session.normal_curve.films.map((f) => f.slug);
       const payload = {
         username: state.session.username,
         ordered_slugs: slugs,
@@ -482,7 +497,7 @@ function updateLookupButtonState() {
 function askIncludeUnrated(count) {
   const dialog = document.getElementById("unratedDialog");
   document.getElementById("unratedDialogMessage").textContent =
-    `${count} unrated ${count === 1 ? "film was" : "films were"} found. Include ${count === 1 ? "it" : "them"} in your bell curve?`;
+    `${count} unrated ${count === 1 ? "film was" : "films were"} found. Include ${count === 1 ? "it" : "them"} in your normal curve?`;
   dialog.returnValue = "";
   dialog.showModal();
   return new Promise((resolve) => {
@@ -490,7 +505,20 @@ function askIncludeUnrated(count) {
   });
 }
 
+function confirmAction(title, message, actionLabel) {
+  const dialog = document.getElementById("confirmDialog");
+  document.getElementById("confirmDialogTitle").textContent = title;
+  document.getElementById("confirmDialogMessage").textContent = message;
+  document.getElementById("confirmDialogAction").textContent = actionLabel;
+  dialog.returnValue = "cancel";
+  dialog.showModal();
+  return new Promise((resolve) => {
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "confirm"), { once: true });
+  });
+}
+
 async function completeLookupSession(sessionData) {
+  requireCurrentSession(sessionData);
   let session = sessionData;
   if (session.unrated_films_count > 0) {
     setProgress(false);
@@ -504,7 +532,7 @@ async function completeLookupSession(sessionData) {
         body: JSON.stringify({
           username: session.username,
           include_unrated: includeUnrated,
-          ordered_slugs: session.bell_curve.films.map((film) => film.slug),
+          ordered_slugs: session.normal_curve.films.map((film) => film.slug),
         }),
       });
       const data = await res.json();
@@ -516,6 +544,13 @@ async function completeLookupSession(sessionData) {
   }
   applySession(session);
   return session;
+}
+
+function requireCurrentSession(sessionData) {
+  if (!Array.isArray(sessionData?.normal_curve?.films) ||
+      !Array.isArray(sessionData.normal_curve.buckets)) {
+    throw new Error("This profile uses an outdated format. Refresh the app and re-sync your profile.");
+  }
 }
 
 async function startLookup(usernameRaw, forceRefresh = false) {
@@ -535,8 +570,8 @@ async function startLookup(usernameRaw, forceRefresh = false) {
   const currentSlugs =
     state.session &&
     normalizeUsernameClient(state.session.username) === cleanUser &&
-    Array.isArray(state.session.bell_curve?.films)
-      ? state.session.bell_curve.films.map((f) => f.slug)
+    Array.isArray(state.session.normal_curve?.films)
+      ? state.session.normal_curve.films.map((f) => f.slug)
       : undefined;
 
   setProgress(
@@ -602,6 +637,7 @@ async function startLookup(usernameRaw, forceRefresh = false) {
 }
 
 function switchAppMode(mode) {
+  if (mode !== "full") clearSortFollowSpace();
   state.appMode = mode;
   document.querySelectorAll("[data-appmode]").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.appmode === mode);
@@ -625,12 +661,14 @@ function toggleMobileProfile() {
 }
 
 function applySession(sessionData) {
+  requireCurrentSession(sessionData);
+  clearSortFollowSpace();
   state.session = sessionData;
   if (state.tournamentApplied && (
     state.tournamentApplied.username !== sessionData.username ||
-    !Array.isArray(sessionData.bell_curve?.films) ||
-    state.tournamentApplied.slugs.length !== sessionData.bell_curve.films.length ||
-    state.tournamentApplied.slugs.some((slug, i) => slug !== sessionData.bell_curve.films[i].slug)
+    !Array.isArray(sessionData.normal_curve?.films) ||
+    state.tournamentApplied.slugs.length !== sessionData.normal_curve.films.length ||
+    state.tournamentApplied.slugs.some((slug, i) => slug !== sessionData.normal_curve.films[i].slug)
   )) {
     state.tournamentApplied = null;
   }
@@ -649,7 +687,7 @@ function applySession(sessionData) {
   state.battle.history = [];
   state.battle.lastPlacedMessage = null;
   if (state.tournament && !TournamentSort.matches(
-    state.tournament, sessionData.username, sessionData.bell_curve.films.map((film) => film.slug)
+    state.tournament, sessionData.username, sessionData.normal_curve.films.map((film) => film.slug)
   )) {
     state.tournament = null;
   }
@@ -681,8 +719,8 @@ function applySession(sessionData) {
     `${sessionData.total_films} films`;
 
   // Sync controls
-  const mean = Number(sessionData.settings?.mean ?? 2.75);
-  const stdDev = Number(sessionData.settings?.std_dev ?? 1.0);
+  const mean = Number(sessionData.settings?.mean ?? DEFAULT_CENTER);
+  const stdDev = Number(sessionData.settings?.std_dev ?? RECOMMENDED_SPREAD);
   document.getElementById("meanSlider").value = mean.toFixed(2);
   document.getElementById("meanValueDisplay").textContent = `${mean.toFixed(2)}★`;
   document.getElementById("stdSlider").value = stdDev.toFixed(2);
@@ -698,7 +736,7 @@ function applySession(sessionData) {
 
 function renderAll() {
   if (!state.session) return;
-  recomputeBellCurveClientSide();
+  recomputeNormalCurveClientSide();
   renderAddMovieMode();
   renderStep2();
   renderStep3();
@@ -708,7 +746,7 @@ async function resolveAndStartAddMovie(movieQuery) {
   if (!state.session) return;
   const cleanQuery = movieQuery.trim();
   if (!cleanQuery) {
-    showError("Enter a movie title to rank and add to your bell curve.");
+    showError("Enter a movie title to rank and add to your normal curve.");
     return;
   }
   showError(null);
@@ -775,22 +813,22 @@ function renderCandidateStrip(candidates, activeSlug) {
 
 function beginAddMovieBinarySearch(filmCandidate) {
   if (!state.session) return;
-  recomputeBellCurveClientSide();
-  const currentFilms = state.session.bell_curve?.films || [];
+  recomputeNormalCurveClientSide();
+  const currentFilms = state.session.normal_curve?.films || [];
 
-  // Snapshot pre-insertion bell-curve rating for each film in the user's profile
+  // Snapshot pre-insertion normal-curve rating for each film in the user's profile
   const others = currentFilms.filter((f) => f.slug !== filmCandidate.slug);
-  const preInsertBellBySlug = {};
+  const preInsertNormalBySlug = {};
   others.forEach((f, idx) => {
-    preInsertBellBySlug[f.slug] = {
-      bell_rating: Number(f.bell_rating),
-      bell_stars: f.bell_stars,
+    preInsertNormalBySlug[f.slug] = {
+      normal_rating: Number(f.normal_rating),
+      normal_stars: f.normal_stars,
       rank: idx + 1,
     };
   });
 
   if (others.length === 0) {
-    finishAddMoviePlacement(filmCandidate, [], 0, preInsertBellBySlug);
+    finishAddMoviePlacement(filmCandidate, [], 0, preInsertNormalBySlug);
     return;
   }
 
@@ -810,7 +848,7 @@ function beginAddMovieBinarySearch(filmCandidate) {
     step: 1,
     maxSteps,
     history: [],
-    preInsertBellBySlug,
+    preInsertNormalBySlug,
   };
 
   renderAddMovieMode();
@@ -830,7 +868,7 @@ function handleAddMovieBinaryPick(newMovieWon) {
   }
 
   if (b.low > b.high) {
-    finishAddMoviePlacement(b.film, b.others, b.low, b.preInsertBellBySlug);
+    finishAddMoviePlacement(b.film, b.others, b.low, b.preInsertNormalBySlug);
     return;
   }
 
@@ -856,7 +894,7 @@ function redoAddMovieRating() {
   beginAddMovieBinarySearch(result.film);
 }
 
-function finishAddMoviePlacement(newFilm, othersList, insertIdx, preInsertBellBySlug) {
+function finishAddMoviePlacement(newFilm, othersList, insertIdx, preInsertNormalBySlug) {
   const updatedList = [...othersList];
   const insertedFilm = {
     ...newFilm,
@@ -865,37 +903,37 @@ function finishAddMoviePlacement(newFilm, othersList, insertIdx, preInsertBellBy
   };
   updatedList.splice(insertIdx, 0, insertedFilm);
 
-  state.session.bell_curve.films = updatedList;
-  recomputeBellCurveClientSide();
+  state.session.normal_curve.films = updatedList;
+  recomputeNormalCurveClientSide();
 
-  const placed = state.session.bell_curve.films.find((f) => f.slug === insertedFilm.slug);
+  const placed = state.session.normal_curve.films.find((f) => f.slug === insertedFilm.slug);
   if (placed) {
-    // Assign the newly computed bell-curve rating as the movie's rating in the list
-    placed.original_rating = placed.bell_rating;
-    placed.original_stars = placed.bell_stars;
-    recomputeBellCurveClientSide();
+    // Assign the newly computed normal-curve rating as the movie's rating in the list
+    placed.original_rating = placed.normal_rating;
+    placed.original_stars = placed.normal_stars;
+    recomputeNormalCurveClientSide();
   }
 
-  // Compare before vs after to see which existing movies need rating adjustments to keep the bell curve
+  // Compare before vs after to see which existing movies need rating adjustments to keep the normal curve
   const boundaryAdjustments = [];
   const preexistingAdjustments = [];
 
-  state.session.bell_curve.films.forEach((f) => {
+  state.session.normal_curve.films.forEach((f) => {
     if (f.slug === insertedFilm.slug) return;
-    const pre = preInsertBellBySlug[f.slug];
-    const newBell = Number(f.bell_rating);
+    const pre = preInsertNormalBySlug[f.slug];
+    const newNormal = Number(f.normal_rating);
     const orig = f.original_rating !== null && f.original_rating !== undefined ? Number(f.original_rating) : null;
 
-    const shiftedByInsertion = pre && Math.abs(newBell - pre.bell_rating) > 1e-4;
-    const differsFromLetterboxd = orig === null || Math.abs(newBell - orig) > 1e-4;
+    const shiftedByInsertion = pre && Math.abs(newNormal - pre.normal_rating) > 1e-4;
+    const differsFromLetterboxd = orig === null || Math.abs(newNormal - orig) > 1e-4;
 
     if (shiftedByInsertion) {
       boundaryAdjustments.push({
         film: f,
-        fromRating: pre.bell_rating,
-        fromStars: pre.bell_stars,
-        toRating: newBell,
-        toStars: f.bell_stars,
+        fromRating: pre.normal_rating,
+        fromStars: pre.normal_stars,
+        toRating: newNormal,
+        toStars: f.normal_stars,
         origRating: orig,
         origStars: formatStars(orig),
         reason: "boundary",
@@ -905,8 +943,8 @@ function finishAddMoviePlacement(newFilm, othersList, insertIdx, preInsertBellBy
         film: f,
         fromRating: orig,
         fromStars: formatStars(orig),
-        toRating: newBell,
-        toStars: f.bell_stars,
+        toRating: newNormal,
+        toStars: f.normal_stars,
         origRating: orig,
         origStars: formatStars(orig),
         reason: "preexisting",
@@ -918,9 +956,9 @@ function finishAddMoviePlacement(newFilm, othersList, insertIdx, preInsertBellBy
   state.addMovie.result = {
     film: placed || insertedFilm,
     finalRank: (placed && placed.final_rank) || insertIdx + 1,
-    totalAfter: state.session.bell_curve.films.length,
-    bellRating: placed ? placed.bell_rating : 3.0,
-    bellStars: placed ? placed.bell_stars : "★★★",
+    totalAfter: state.session.normal_curve.films.length,
+    normalRating: placed ? placed.normal_rating : 3.0,
+    normalStars: placed ? placed.normal_stars : "★★★",
     boundaryAdjustments,
     preexistingAdjustments,
   };
@@ -942,10 +980,10 @@ function renderAddMovieMode() {
   addModeBtn.textContent = needsSetup ? "Get Started" : "+ Add Movie";
   addModeBtn.dataset.mobileLabel = needsSetup ? "Get Started" : "Add Movie";
   if (needsSetup) {
-    const buckets = state.session.bell_curve.buckets;
-    const differing = buckets.filter((bucket) => bucket.original_count !== bucket.bell_count).length;
+    const buckets = state.session.normal_curve.buckets;
+    const differing = buckets.filter((bucket) => bucket.original_count !== bucket.normal_count).length;
     document.getElementById("profileSetupSummary").textContent =
-      `${differing} of ${buckets.length} rating levels differ from the bell-curve target for @${state.session.username}.`;
+      `${differing} of ${buckets.length} rating levels differ from the normal-curve target for @${state.session.username}.`;
     document.getElementById("profileSetupChart").innerHTML = renderDistributionChart(buckets);
     battleCard.classList.add("hidden");
     resultCard.classList.add("hidden");
@@ -995,7 +1033,7 @@ function renderAddMovieMode() {
       <h3 class="verdict-title">${escapeHtml(f.title)} ${f.year ? `<span class="muted-meta">(${f.year})</span>` : ""}</h3>
       <div class="verdict-rating-box">
         <span class="verdict-rate-label">Rate this movie on Letterboxd:</span>
-        <span class="verdict-stars">${escapeHtml(res.bellStars)}</span>
+        <span class="verdict-stars">${escapeHtml(res.normalStars)}</span>
       </div>
     </div>
   `;
@@ -1017,7 +1055,7 @@ function renderAddMovieMode() {
         : "";
     listEl.innerHTML = `
       <div class="no-adjustments-box">
-        &#x2713; <strong>No other movies shifted tiers!</strong> Adding <em>${escapeHtml(f.title)}</em> at #${res.finalRank} keeps your bell curve balanced without changing any boundary movie.${escapeHtml(extraNote)}
+        &#x2713; <strong>No other movies shifted tiers!</strong> Adding <em>${escapeHtml(f.title)}</em> at #${res.finalRank} keeps your normal curve balanced without changing any boundary movie.${escapeHtml(extraNote)}
       </div>
     `;
   } else {
@@ -1028,7 +1066,7 @@ function renderAddMovieMode() {
             <th>Rank</th>
             <th>Movie</th>
             <th>Previous Rating</th>
-            <th>New Bell-Curve Rating</th>
+            <th>New Normal-Curve Rating</th>
             <th>Reason</th>
           </tr>
         </thead>
@@ -1130,7 +1168,7 @@ function renderPosterThumb(film, highResolution = false) {
 // --- VIEW 1: Manual Sort (Drag-and-Drop List + Single-Film Binary Search) ---
 function renderStep2() {
   const s = state.session;
-  const films = s.bell_curve?.films || [];
+  const films = s.normal_curve?.films || [];
 
   const metaEl = document.getElementById("step2SummaryMeta");
   if (metaEl) {
@@ -1146,6 +1184,7 @@ function renderStep2() {
 }
 
 function setSortMode(mode) {
+  if (mode !== "list") clearSortFollowSpace();
   if (mode !== "tournament") showTournamentError(null);
   state.sortMode = mode;
   document.querySelectorAll("[data-sortmode]").forEach((button) =>
@@ -1180,7 +1219,7 @@ function loadTournamentDraft() {
     const stored = window.localStorage.getItem(tournamentDraftKey(state.session.username));
     if (!stored) return;
     const draft = JSON.parse(stored);
-    const slugs = state.session.bell_curve.films.map((film) => film.slug);
+    const slugs = state.session.normal_curve.films.map((film) => film.slug);
     if (draft.username !== state.session.username) {
       showTournamentError("This saved tournament belongs to a different Letterboxd user. Start a new tournament.");
       return;
@@ -1213,7 +1252,7 @@ function renderTournamentOrderPreview(slugs, applied) {
   document.getElementById("tournamentOrderPreviewNote").textContent = applied
     ? "This order is saved. You can also edit it in List Sorter."
     : "Your current order will not change until you apply this result.";
-  const films = new Map(state.session.bell_curve.films.map((film) => [film.slug, film]));
+  const films = new Map(state.session.normal_curve.films.map((film) => [film.slug, film]));
   document.getElementById("tournamentOrderPreviewList").innerHTML = slugs.map((slug, index) => {
     const film = films.get(slug);
     return `<li><span class="tournament-order-rank">#${index + 1}</span><span>${escapeHtml(
@@ -1265,7 +1304,7 @@ function renderTournament() {
     renderTournamentOrderPreview(draft.lists[0], false);
     return;
   }
-  const films = state.session.bell_curve.films;
+  const films = state.session.normal_curve.films;
   const filmBySlug = new Map(films.map((film) => [film.slug, film]));
   const current = TournamentSort.pair(draft);
   for (const [side, slug] of [["Left", current[0]], ["Right", current[1]]]) {
@@ -1280,7 +1319,7 @@ function chooseTournament(side) {
   const draft = state.tournament;
   if (!draft || !TournamentSort.pair(draft)) return;
   if (!TournamentSort.matches(
-    draft, state.session.username, state.session.bell_curve.films.map((film) => film.slug)
+    draft, state.session.username, state.session.normal_curve.films.map((film) => film.slug)
   )) {
     showTournamentError("The movie list changed. Discard this tournament and start again.");
     return;
@@ -1299,7 +1338,7 @@ function undoTournamentChoice() {
 async function applyTournament() {
   const draft = state.tournament;
   if (!draft || draft.lists.length !== 1) return;
-  const slugs = state.session.bell_curve.films.map((film) => film.slug);
+  const slugs = state.session.normal_curve.films.map((film) => film.slug);
   if (!TournamentSort.matches(draft, state.session.username, slugs)) {
     showTournamentError("The movie list changed. Discard this tournament and start again.");
     return;
@@ -1334,7 +1373,7 @@ async function applyTournament() {
     applySession(data.session);
     state.tournamentApplied = {
       username: data.session.username,
-      slugs: data.session.bell_curve.films.map((film) => film.slug),
+      slugs: data.session.normal_curve.films.map((film) => film.slug),
       comparisons: draft.comparisons,
     };
     renderTournament();
@@ -1349,7 +1388,7 @@ async function applyTournament() {
 }
 
 function renderStep2List() {
-  const films = state.session?.bell_curve?.films || [];
+  const films = state.session?.normal_curve?.films || [];
 
   const listEl = document.getElementById("manualSortList");
   if (!films.length) {
@@ -1357,19 +1396,19 @@ function renderStep2List() {
     return;
   }
 
-  // Precompute master rank range and count for each Bell-Curve target rating tier
+  // Precompute master rank range and count for each Normal-Curve target rating tier
   const tierStats = {};
-  const buckets = state.session?.bell_curve?.buckets || [];
+  const buckets = state.session?.normal_curve?.buckets || [];
   buckets.forEach((b) => {
     tierStats[b.rating.toFixed(1)] = {
-      count: b.bell_count,
+      count: b.normal_count,
       pct: b.probability_pct,
       minRank: null,
       maxRank: null,
     };
   });
   films.forEach((f) => {
-    const k = Number(f.bell_rating).toFixed(1);
+    const k = Number(f.normal_rating).toFixed(1);
     if (!tierStats[k]) {
       tierStats[k] = { count: 0, pct: 0, minRank: null, maxRank: null };
     }
@@ -1387,7 +1426,7 @@ function renderStep2List() {
   const slicedFilms = films.slice(0, limit);
 
   slicedFilms.forEach((f) => {
-    const tierKey = Number(f.bell_rating).toFixed(1);
+    const tierKey = Number(f.normal_rating).toFixed(1);
     if (tierKey !== lastTierKey) {
       const ts = tierStats[tierKey] || {};
       const rangeStr =
@@ -1399,7 +1438,7 @@ function renderStep2List() {
       rowsHtml.push(`
         <div class="tier-separator" data-tier-rating="${tierKey}">
           <div class="tier-separator-left">
-            <span class="tier-separator-badge">${escapeHtml(f.bell_stars)}</span>
+            <span class="tier-separator-badge">${escapeHtml(f.normal_stars)}</span>
           </div>
           <div class="tier-separator-right">
             <span>${rangeStr}</span>
@@ -1457,16 +1496,14 @@ function renderStep2List() {
           <span class="stars-orange">${escapeHtml(formatStars(f.original_rating))}</span>
         </div>
 
-        <div class="bell-rating-cell" title="Bell-Curve Target">
-          <span class="mobile-cell-label">Bell:</span>
-          <span class="stars-green">${escapeHtml(f.bell_stars)}</span>
+        <div class="normal-rating-cell" title="Normal-Curve Target">
+          <span class="mobile-cell-label">Normal:</span>
+          <span class="stars-green">${escapeHtml(f.normal_stars)}</span>
         </div>
 
         <div class="row-controls">
           <button type="button" class="icon-btn btn-rating-up" data-action="rating-up" data-slug="${escapeHtml(f.slug)}" title="Move UP 1 rating tier (places at bottom of higher ★ tier)">+&starf;<span class="btn-label-text"> Up</span></button>
           <button type="button" class="icon-btn btn-rating-down" data-action="rating-down" data-slug="${escapeHtml(f.slug)}" title="Move DOWN 1 rating tier (places at top of lower ★ tier)">&minus;&starf;<span class="btn-label-text"> Down</span></button>
-          <button type="button" class="icon-btn" data-action="tier-top" data-slug="${escapeHtml(f.slug)}" title="Move to TOP of current rating tier">&#x2912;<span class="btn-label-text"> Top</span></button>
-          <button type="button" class="icon-btn" data-action="tier-bottom" data-slug="${escapeHtml(f.slug)}" title="Move to BOTTOM of current rating tier">&#x2913;<span class="btn-label-text"> Bot</span></button>
           <button type="button" class="icon-btn" data-action="binary-rank" data-slug="${escapeHtml(f.slug)}" title="Binary-search rank this film (A vs B)">&#x1F3AF;</button>
         </div>
       </div>
@@ -1508,22 +1545,38 @@ function renderStep2List() {
 }
 
 function moveFilmInMasterList(slug, targetSlug, placeAfter = false) {
-  const films = state.session.bell_curve.films;
-  const fromIdx = films.findIndex((f) => f.slug === slug);
-  const toIdx = films.findIndex((f) => f.slug === targetSlug);
-  if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return;
+  const films = state.session.normal_curve.films;
+  const preview = previewFilmMove(films, slug, targetSlug, placeAfter);
+  if (!preview || preview.fromIdx === preview.insertAt) return;
 
-  const [moved] = films.splice(fromIdx, 1);
-  const newTargetIdx = films.findIndex((f) => f.slug === targetSlug);
-  const insertAt = placeAfter ? newTargetIdx + 1 : newTargetIdx;
-  films.splice(insertAt, 0, moved);
+  const [moved] = films.splice(preview.fromIdx, 1);
+  films.splice(preview.insertAt, 0, moved);
 
   renderAll();
   schedulePersistOrder();
 }
 
+function previewFilmMove(films, slug, targetSlug, placeAfter) {
+  const fromIdx = films.findIndex((f) => f.slug === slug);
+  const toIdx = films.findIndex((f) => f.slug === targetSlug);
+  if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return null;
+
+  const insertAt = toIdx + (placeAfter ? (fromIdx < toIdx ? 0 : 1) : (fromIdx < toIdx ? -1 : 0));
+  const shifts = [];
+  for (let i = Math.min(fromIdx, insertAt); i <= Math.max(fromIdx, insertAt); i++) {
+    const film = i === insertAt ? films[fromIdx]
+      : fromIdx < insertAt ? films[i + 1] : films[i - 1];
+    const before = Number(film.normal_rating);
+    const after = Number(films[i].normal_rating);
+    if (Math.abs(before - after) > 1e-4) {
+      shifts.push({ film, before, after });
+    }
+  }
+  return { fromIdx, insertAt, rating: Number(films[insertAt].normal_rating), shifts };
+}
+
 function jumpFilmToExactRank(slug, newRank1Based) {
-  const films = state.session.bell_curve.films;
+  const films = state.session.normal_curve.films;
   const fromIdx = films.findIndex((f) => f.slug === slug);
   if (fromIdx === -1) return;
   const targetIdx = Math.max(0, Math.min(films.length - 1, Number(newRank1Based) - 1));
@@ -1531,19 +1584,21 @@ function jumpFilmToExactRank(slug, newRank1Based) {
 
   const [moved] = films.splice(fromIdx, 1);
   films.splice(targetIdx, 0, moved);
+  if (targetIdx >= (state.step2RenderLimit || 300)) {
+    state.step2RenderLimit = targetIdx + 1;
+  }
   renderAll();
   schedulePersistOrder();
 }
 
 function moveFilmByRatingTier(slug, action) {
-  const films = state.session?.bell_curve?.films || [];
+  const films = state.session?.normal_curve?.films || [];
   const film = films.find((f) => f.slug === slug);
   if (!film || films.length < 2) return;
 
-  const currRating = Number(film.bell_rating);
-  const sameTier = films.filter((f) => Math.abs(Number(f.bell_rating) - currRating) < 1e-4);
-  const higherFilms = films.filter((f) => Number(f.bell_rating) > currRating + 1e-4);
-  const lowerFilms = films.filter((f) => Number(f.bell_rating) < currRating - 1e-4);
+  const currRating = Number(film.normal_rating);
+  const higherFilms = films.filter((f) => Number(f.normal_rating) > currRating + 1e-4);
+  const lowerFilms = films.filter((f) => Number(f.normal_rating) < currRating - 1e-4);
 
   if (action === "rating-up") {
     // Move up 1 rating tier -> put at the BOTTOM of the next higher rating tier
@@ -1563,35 +1618,38 @@ function moveFilmByRatingTier(slug, action) {
       // Already in lowest tier -> move to Rank #N (bottom of lowest tier)
       jumpFilmToExactRank(slug, films.length);
     }
-  } else if (action === "tier-top") {
-    // Move to the TOP of current rating tier (or top of next higher tier if already at top)
-    const firstInTier = sameTier[0];
-    if (firstInTier && firstInTier.slug !== slug) {
-      jumpFilmToExactRank(slug, firstInTier.final_rank);
-    } else if (higherFilms.length > 0) {
-      const prevTierRating = Number(higherFilms[higherFilms.length - 1].bell_rating);
-      const prevTierFilms = films.filter(
-        (f) => Math.abs(Number(f.bell_rating) - prevTierRating) < 1e-4
-      );
-      if (prevTierFilms.length > 0) {
-        jumpFilmToExactRank(slug, prevTierFilms[0].final_rank);
-      }
-    }
-  } else if (action === "tier-bottom") {
-    // Move to the BOTTOM of current rating tier (or bottom of next lower tier if already at bottom)
-    const lastInTier = sameTier[sameTier.length - 1];
-    if (lastInTier && lastInTier.slug !== slug) {
-      jumpFilmToExactRank(slug, lastInTier.final_rank);
-    } else if (lowerFilms.length > 0) {
-      const nextTierRating = Number(lowerFilms[0].bell_rating);
-      const nextTierFilms = films.filter(
-        (f) => Math.abs(Number(f.bell_rating) - nextTierRating) < 1e-4
-      );
-      if (nextTierFilms.length > 0) {
-        jumpFilmToExactRank(slug, nextTierFilms[nextTierFilms.length - 1].final_rank);
-      }
-    }
   }
+}
+
+let followMoveFrame = null;
+
+function clearSortFollowSpace() {
+  const listEl = document.getElementById("manualSortList");
+  if (listEl?.style) listEl.style.paddingBottom = "";
+}
+
+function followMovedFilm(listEl, slug, action, previousTop) {
+  const findRow = () => Array.from(listEl.querySelectorAll(".sort-row"))
+    .find((row) => row.dataset.slug === slug);
+  const alignRow = () => {
+    const row = findRow();
+    if (!row) return;
+    const distance = row.getBoundingClientRect().top - previousTop;
+    const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+    const extraSpace = Math.ceil(window.scrollY + distance - maxScroll);
+    if (extraSpace > 0) {
+      listEl.style.paddingBottom = `${(parseFloat(listEl.style.paddingBottom) || 0) + extraSpace}px`;
+    }
+    if (Math.abs(distance) > 1) window.scrollBy(0, distance);
+  };
+
+  alignRow();
+  findRow()?.querySelector(`[data-action="${action}"]`)?.focus({ preventScroll: true });
+  if (followMoveFrame !== null) cancelAnimationFrame(followMoveFrame);
+  followMoveFrame = requestAnimationFrame(() => {
+    followMoveFrame = null;
+    if (state.appMode === "full" && state.sortMode === "list") alignRow();
+  });
 }
 
 function attachSortRowEvents(listEl) {
@@ -1634,7 +1692,9 @@ function attachSortRowEvents(listEl) {
       renderBattleArena();
       return;
     }
+    const previousTop = btn.closest(".sort-row").getBoundingClientRect().top;
     moveFilmByRatingTier(slug, action);
+    followMovedFilm(listEl, slug, action, previousTop);
   });
 
   // Delegated Pointer-based Drag and Drop with Wheel Scroll + 60fps Edge Auto-Scroll
@@ -1669,8 +1729,13 @@ function ensureDragGhost() {
 
 function clearDragHighlights() {
   document.querySelectorAll(".sort-row").forEach((r) => {
-    r.classList.remove("dragging", "drag-over-top", "drag-over-bottom");
+    r.classList.remove("dragging", "drag-over-top", "drag-over-bottom",
+      "drag-rating-up", "drag-rating-down");
+    r.removeAttribute("title");
   });
+  document.querySelectorAll(".tier-separator.drag-rating-destination, .tier-separator.drag-drop-before").forEach((tier) =>
+    tier.classList.remove("drag-rating-destination", "drag-drop-before")
+  );
 }
 
 function updateDragTargetAtPoint(clientX, clientY) {
@@ -1681,7 +1746,13 @@ function updateDragTargetAtPoint(clientX, clientY) {
   const rows = Array.from(listEl.querySelectorAll(".sort-row"));
   if (!rows.length) return;
 
-  rows.forEach((r) => r.classList.remove("drag-over-top", "drag-over-bottom"));
+  rows.forEach((r) => {
+    r.classList.remove("drag-over-top", "drag-over-bottom", "drag-rating-up", "drag-rating-down");
+    r.removeAttribute("title");
+  });
+  listEl.querySelectorAll(".tier-separator.drag-rating-destination, .tier-separator.drag-drop-before").forEach((tier) =>
+    tier.classList.remove("drag-rating-destination", "drag-drop-before")
+  );
 
   // Find the row closest vertically to the pointer
   let hoveredRow = null;
@@ -1707,6 +1778,7 @@ function updateDragTargetAtPoint(clientX, clientY) {
   const targetSlug = hoveredRow.dataset.slug;
   if (!targetSlug || targetSlug === dragController.slug) {
     dragController.targetSlug = null;
+    ensureDragGhost().classList.add("hidden");
     return;
   }
 
@@ -1720,12 +1792,49 @@ function updateDragTargetAtPoint(clientX, clientY) {
   dragController.targetSlug = targetSlug;
   dragController.placeAfter = placeAfter;
 
+  const preview = previewFilmMove(
+    state.session.normal_curve.films, dragController.slug, targetSlug, placeAfter
+  );
+  if (!preview) return;
+  const movedFilm = state.session.normal_curve.films[preview.fromIdx];
+  const otherShifts = preview.shifts.filter(({ film }) => film.slug !== dragController.slug);
+  const visibleRows = new Map(rows.map((row) => [row.dataset.slug, row]));
+  for (const { film, before, after } of otherShifts) {
+    const row = visibleRows.get(film.slug);
+    if (!row) continue;
+    row.classList.add(after > before ? "drag-rating-up" : "drag-rating-down");
+    row.title = `${film.title}: ${formatStars(before)} → ${formatStars(after)}`;
+  }
+  const destinationStartsTier = preview.insertAt === 0 ||
+    Number(state.session.normal_curve.films[preview.insertAt - 1].normal_rating) !== preview.rating;
+  listEl.querySelectorAll(".tier-separator").forEach((tier) => {
+    if (Number(tier.dataset.tierRating) === preview.rating) {
+      tier.classList.add("drag-rating-destination");
+      if (destinationStartsTier) {
+        hoveredRow.classList.remove("drag-over-top", "drag-over-bottom");
+        tier.classList.add("drag-drop-before");
+      }
+    }
+  });
+
   const ghost = ensureDragGhost();
-  const targetRank = hoveredRow.dataset.rank || "";
-  ghost.innerHTML = `<span class="ghost-tag">Move</span> <strong>${escapeHtml(dragController.title)}</strong> <span class="ghost-target">&rarr; ${placeAfter ? "after" : "before"} #${escapeHtml(targetRank)}</span>`;
-  const maxX = Math.max(8, window.innerWidth - 230);
+  ghost.classList.remove("hidden");
+  const movedRatingChanged = preview.rating !== Number(movedFilm.normal_rating);
+  ghost.innerHTML = `
+    <span class="ghost-main"><span class="ghost-tag">Move</span>
+      <strong>${escapeHtml(dragController.title)}</strong>
+      <span class="ghost-target">&rarr; #${preview.insertAt + 1} · ${escapeHtml(formatStars(preview.rating))}${movedRatingChanged ? ` (was ${escapeHtml(movedFilm.normal_stars)})` : ""}</span>
+    </span>
+    <span class="ghost-shifts">${otherShifts.length
+      ? otherShifts.slice(0, 3).map(({ film, before, after }) =>
+        `<span class="ghost-shift ${after > before ? "drag-shift-up" : "drag-shift-down"}">${after > before ? "↑" : "↓"} ${escapeHtml(film.title)}: ${escapeHtml(formatStars(before))} → ${escapeHtml(formatStars(after))}</span>`
+      ).join("") + (otherShifts.length > 3 ? `<span>+${otherShifts.length - 3} more rating shifts</span>` : "")
+      : "No other ratings change"}</span>
+  `;
+  const maxX = Math.max(8, window.innerWidth - ghost.offsetWidth - 8);
   const clampedX = Math.min(maxX, Math.max(8, Math.round(clientX + 12)));
-  const clampedY = Math.max(8, Math.round(clientY - 28));
+  const maxY = Math.max(8, window.innerHeight - ghost.offsetHeight - 8);
+  const clampedY = Math.min(maxY, Math.max(8, Math.round(clientY - 28)));
   ghost.style.transform = `translate3d(${clampedX}px, ${clampedY}px, 0)`;
 }
 
@@ -1881,7 +1990,7 @@ function populateBinaryTargetSelect() {
   const sel = document.getElementById("binaryTargetFilmSelect");
   if (!sel) return;
   const currentVal = sel.value;
-  const films = [...(state.session?.bell_curve?.films || [])].sort((a, b) => {
+  const films = [...(state.session?.normal_curve?.films || [])].sort((a, b) => {
     const cmp = String(a.title || "").localeCompare(String(b.title || ""), undefined, {
       sensitivity: "base",
       numeric: true,
@@ -1901,7 +2010,7 @@ function populateBinaryTargetSelect() {
 }
 
 function startBinarySearchForFilm(targetSlug, clearBanner = true) {
-  const films = state.session?.bell_curve?.films || [];
+  const films = state.session?.normal_curve?.films || [];
   if (films.length < 2) return;
   const idx = films.findIndex((f) => f.slug === targetSlug);
   const useSlug = idx !== -1 ? targetSlug : films[0].slug;
@@ -1933,7 +2042,7 @@ function startBinarySearchForFilm(targetSlug, clearBanner = true) {
 }
 
 function ensureBattlePair() {
-  const films = state.session?.bell_curve?.films || [];
+  const films = state.session?.normal_curve?.films || [];
   if (films.length < 2) return;
 
   if (
@@ -1946,7 +2055,7 @@ function ensureBattlePair() {
 }
 
 function renderBattleArena() {
-  const films = state.session?.bell_curve?.films || [];
+  const films = state.session?.normal_curve?.films || [];
   if (films.length < 2) return;
 
   ensureBattlePair();
@@ -1989,7 +2098,7 @@ function renderBattleArena() {
 }
 
 function handleBattleChoice(winnerSlug) {
-  const films = state.session?.bell_curve?.films || [];
+  const films = state.session?.normal_curve?.films || [];
   const bs = state.battle.binaryState;
   if (!bs || films.length < 2) return;
 
@@ -2008,13 +2117,13 @@ function handleBattleChoice(winnerSlug) {
     const targetFilm = films.find((f) => f.slug === bs.targetSlug);
     const newRank = bs.low + 1;
     others.splice(bs.low, 0, targetFilm);
-    state.session.bell_curve.films = others;
-    recomputeBellCurveClientSide();
+    state.session.normal_curve.films = others;
+    recomputeNormalCurveClientSide();
 
-    const placedFilm = state.session.bell_curve.films.find((f) => f.slug === bs.targetSlug);
-    const bellStarText = placedFilm ? placedFilm.bell_stars : "";
+    const placedFilm = state.session.normal_curve.films.find((f) => f.slug === bs.targetSlug);
+    const normalStarText = placedFilm ? placedFilm.normal_stars : "";
     state.battle.lastPlacedMessage =
-      `✓ Placed "${targetFilm.title}" at #${newRank} (${bellStarText})`;
+      `✓ Placed "${targetFilm.title}" at #${newRank} (${normalStarText})`;
 
     populateBinaryTargetSelect();
     startBinarySearchForFilm(bs.targetSlug, false);
@@ -2034,27 +2143,27 @@ function undoBattleChoice() {
   const prev = state.battle.history.pop();
   if (!bs || !prev) return;
   Object.assign(bs, prev);
-  const others = state.session.bell_curve.films.filter((film) => film.slug !== bs.targetSlug);
+  const others = state.session.normal_curve.films.filter((film) => film.slug !== bs.targetSlug);
   state.battle.rightSlug = others[bs.mid].slug;
   state.battle.lastPlacedMessage = null;
   renderBattleArena();
 }
 
 // ---------------------------------------------------------------------------
-// VIEW 2: Bell Curve Chart & Full Ranked Comparison Table
+// VIEW 2: Normal Curve Chart & Full Ranked Comparison Table
 // ---------------------------------------------------------------------------
 
 function isFilmRatingChanged(film) {
   if (film.original_rating === null || film.original_rating === undefined) {
     return true;
   }
-  return Math.abs(Number(film.bell_rating) - Number(film.original_rating)) > 1e-4;
+  return Math.abs(Number(film.normal_rating) - Number(film.original_rating)) > 1e-4;
 }
 
 function hasMatchingDistribution() {
-  const buckets = state.session?.bell_curve?.buckets;
+  const buckets = state.session?.normal_curve?.buckets;
   return buckets?.length === STAR_BUCKETS.length &&
-    buckets.every((bucket) => bucket.original_count === bucket.bell_count);
+    buckets.every((bucket) => bucket.original_count === bucket.normal_count);
 }
 
 function isProfileSetupRequired() {
@@ -2081,40 +2190,40 @@ async function resyncProfileSetup() {
 function renderDistributionChart(buckets) {
   const maxBar = Math.max(
     1,
-    ...buckets.map((b) => Math.max(b.original_count, b.bell_count))
+    ...buckets.map((b) => Math.max(b.original_count, b.normal_count))
   );
   return buckets.map((b) => {
     const hOrig = Math.max(2, Math.round((b.original_count / maxBar) * 140));
-    const hBell = Math.max(2, Math.round((b.bell_count / maxBar) * 140));
+    const hNormal = Math.max(2, Math.round((b.normal_count / maxBar) * 140));
     return `
-      <div class="bell-col">
-        <div class="bell-bars-pair">
+      <div class="normal-col">
+        <div class="normal-bars-pair">
           <div class="bar-wrap" title="Original ${b.label}: ${b.original_count} films">
             <span class="bar-count">${b.original_count}</span>
             <div class="bar-orig" style="height: ${hOrig}px"></div>
           </div>
-          <div class="bar-wrap" title="Bell Curve ${b.label}: ${b.bell_count} films (${b.probability_pct}%)">
-            <span class="bar-count" style="color: var(--lb-green)">${b.bell_count}</span>
-            <div class="bar-bell" style="height: ${hBell}px"></div>
+          <div class="bar-wrap" title="Normal Curve ${b.label}: ${b.normal_count} films (${b.probability_pct}%)">
+            <span class="bar-count" style="color: var(--lb-green)">${b.normal_count}</span>
+            <div class="bar-normal" style="height: ${hNormal}px"></div>
           </div>
         </div>
-        <span class="bell-col-label">${b.label}</span>
-        <span class="bell-col-sub">${b.probability_pct}%</span>
+        <span class="normal-col-label">${b.label}</span>
+        <span class="normal-col-sub">${b.probability_pct}%</span>
       </div>
     `;
   }).join("");
 }
 
 function renderStep3() {
-  const bc = state.session?.bell_curve;
+  const bc = state.session?.normal_curve;
   if (!bc) return;
 
   const stats = bc.stats || {};
 
   // Compact inline stats summary
-  document.getElementById("bellKpiGrid").innerHTML = `
+  document.getElementById("normalKpiGrid").innerHTML = `
     <span class="kpi-pill"><strong>${bc.total_films}</strong> Films</span>
-    <span class="kpi-pill">Mean: <strong>${stats.mean_original !== null ? stats.mean_original.toFixed(2) + "★" : "—"}</strong> &rarr; <strong class="stars-green">${stats.mean_bell !== null ? stats.mean_bell.toFixed(2) + "★" : "—"}</strong></span>
+    <span class="kpi-pill">Mean: <strong>${stats.mean_original !== null ? stats.mean_original.toFixed(2) + "★" : "—"}</strong> &rarr; <strong class="stars-green">${stats.mean_normal !== null ? stats.mean_normal.toFixed(2) + "★" : "—"}</strong></span>
     <span class="kpi-pill"><strong class="stars-green">+${stats.upgraded_count}</strong> Upgraded</span>
     <span class="kpi-pill"><strong class="stars-orange">&minus;${stats.downgraded_count}</strong> Downgraded</span>
     <span class="kpi-pill"><strong>=${stats.unchanged_count}</strong> Unchanged</span>
@@ -2122,7 +2231,7 @@ function renderStep3() {
 
   // Render Dual Bar Chart (0.5 to 5.0)
   const buckets = bc.buckets || [];
-  document.getElementById("bellCurveChart").innerHTML = renderDistributionChart(buckets);
+  document.getElementById("normalCurveChart").innerHTML = renderDistributionChart(buckets);
 
   // Render Bucket Allocation Mini Table
   const tbody = document.querySelector("#bucketAllocationTable tbody");
@@ -2134,7 +2243,7 @@ function renderStep3() {
         <td><strong class="stars-green">${b.label}</strong></td>
         <td>${b.probability_pct}%</td>
         <td>${b.original_count}</td>
-        <td><strong class="stars-green">${b.bell_count}</strong></td>
+        <td><strong class="stars-green">${b.normal_count}</strong></td>
       </tr>
     `
     )
@@ -2153,11 +2262,11 @@ function renderStep3() {
     return true;
   });
 
-  renderBellComparisonTable(filteredFilms);
+  renderNormalComparisonTable(filteredFilms);
 }
 
-function renderBellComparisonTable(filteredFilms) {
-  const tbody = document.getElementById("bellTableBody");
+function renderNormalComparisonTable(filteredFilms) {
+  const tbody = document.getElementById("normalTableBody");
   if (!filteredFilms.length) {
     tbody.innerHTML = `<tr><td colspan="8" class="muted-meta">No matching films found.</td></tr>`;
     return;
@@ -2178,9 +2287,9 @@ function renderBellComparisonTable(filteredFilms) {
           </a>
         </td>
         <td><span class="stars-orange">${escapeHtml(formatStars(f.original_rating))}</span></td>
-        <td><strong class="stars-green">${escapeHtml(f.bell_stars)}</strong></td>
+        <td><strong class="stars-green">${escapeHtml(f.normal_stars)}</strong></td>
         <td>${formatDeltaBadge(f.rating_delta, f.original_rating)}</td>
-        <td>${f.continuous_bell_score.toFixed(2)}★</td>
+        <td>${f.continuous_normal_score.toFixed(2)}★</td>
         <td>${f.z_score >= 0 ? "+" : ""}${f.z_score.toFixed(2)}&sigma;</td>
       </tr>
     `
@@ -2209,14 +2318,14 @@ function renderBellComparisonTable(filteredFilms) {
   if (moreBtn) {
     moreBtn.addEventListener("click", () => {
       state.step3RenderLimit = (state.step3RenderLimit || 300) + 500;
-      renderBellComparisonTable(filteredFilms);
+      renderNormalComparisonTable(filteredFilms);
     });
   }
   const allBtn = document.getElementById("step3LoadAllBtn");
   if (allBtn) {
     allBtn.addEventListener("click", () => {
       state.step3RenderLimit = filteredFilms.length;
-      renderBellComparisonTable(filteredFilms);
+      renderNormalComparisonTable(filteredFilms);
     });
   }
 }
@@ -2290,7 +2399,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     if (isProfileSetupRequired()) {
-      showError("Your rating distribution does not match the bell curve yet. Open Full List Mode to sort and update your ratings, or choose Ignore to continue.");
+      showError("Your rating distribution does not match the normal curve yet. Open Full List Mode to sort and update your ratings, or choose Ignore to continue.");
       return;
     }
 
@@ -2350,8 +2459,10 @@ document.addEventListener("DOMContentLoaded", () => {
   // Step 2 reset
   document.getElementById("resetOrderBtn").addEventListener("click", async () => {
     if (!state.session) return;
-    const confirmed = window.confirm(
-      "Are you sure you want to reset your manual movie order back to your original Letterboxd rating sort?"
+    const confirmed = await confirmAction(
+      "Reset manual order?",
+      "Reset your manual movie order back to your original Letterboxd rating sort?",
+      "Reset order"
     );
     if (!confirmed) return;
 
@@ -2386,7 +2497,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   document.getElementById("tournamentStartBtn").addEventListener("click", () => {
-    if (!state.session || state.session.bell_curve.films.length < 2) {
+    if (!state.session || state.session.normal_curve.films.length < 2) {
       showTournamentError("Load at least two movies to start a tournament.");
       return;
     }
@@ -2394,14 +2505,18 @@ document.addEventListener("DOMContentLoaded", () => {
     showTournamentError(null);
     state.tournamentApplied = null;
     state.tournament = TournamentSort.start(
-      state.session.username, state.session.bell_curve.films.map((film) => film.slug)
+      state.session.username, state.session.normal_curve.films.map((film) => film.slug)
     );
     saveTournamentDraft();
     renderTournament();
   });
 
-  document.getElementById("tournamentCancelBtn").addEventListener("click", () => {
-    if (!state.tournament || !window.confirm("Discard your unfinished tournament?")) return;
+  document.getElementById("tournamentCancelBtn").addEventListener("click", async () => {
+    if (!state.tournament || !await confirmAction(
+      "Discard tournament?",
+      "Discard your unfinished tournament?",
+      "Discard tournament"
+    )) return;
     try {
       window.localStorage.removeItem(tournamentDraftKey(state.tournament.username));
     } catch (err) {
@@ -2425,7 +2540,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   document.getElementById("binaryRandomFilmBtn").addEventListener("click", () => {
-    const films = state.session?.bell_curve?.films || [];
+    const films = state.session?.normal_curve?.films || [];
     if (!films.length) return;
     const randomFilm = films[Math.floor(Math.random() * films.length)];
     startBinarySearchForFilm(randomFilm.slug, true);
@@ -2490,7 +2605,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Step 3 Bell Curve Sliders
+  // Step 3 Normal Curve Sliders
   document.getElementById("meanSlider").addEventListener("input", (e) => {
     if (!state.session) return;
     const val = parseFloat(e.target.value);
@@ -2509,17 +2624,12 @@ document.addEventListener("DOMContentLoaded", () => {
     schedulePersistOrder();
   });
 
-  document.getElementById("resetCurveParamsBtn").addEventListener("click", () => {
-    if (!state.session) return;
-    state.session.settings.mean = 2.75;
-    state.session.settings.std_dev = 1.0;
-    document.getElementById("meanSlider").value = "2.75";
-    document.getElementById("meanValueDisplay").textContent = "2.75★";
-    document.getElementById("stdSlider").value = "1.00";
-    document.getElementById("stdValueDisplay").textContent = "1.00★";
-    renderAll();
-    schedulePersistOrder();
-  });
+  document.getElementById("resetCurveParamsBtn").addEventListener("click", () =>
+    applyCurvePreset(RECOMMENDED_SPREAD)
+  );
+  document.getElementById("standardCurveParamsBtn").addEventListener("click", () =>
+    applyCurvePreset(STANDARD_SPREAD)
+  );
 
   document.getElementById("step3OnlyChangedToggle").addEventListener("change", (e) => {
     state.step3OnlyChanged = e.target.checked;
