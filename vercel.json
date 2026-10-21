@@ -7,19 +7,19 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "/api/index.py"
+      "destination": "/api/index.py?__route=/api/$1"
     },
     {
       "source": "/styles.css",
-      "destination": "/static/styles.css"
+      "destination": "/api/index.py?__route=/styles.css"
     },
     {
       "source": "/app.js",
-      "destination": "/static/app.js"
+      "destination": "/api/index.py?__route=/app.js"
     },
     {
       "source": "/",
-      "destination": "/static/index.html"
+      "destination": "/api/index.py?__route=/"
     }
   ]
 }

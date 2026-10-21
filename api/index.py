@@ -48,6 +48,21 @@ class handler(BaseHTTPRequestHandler):  # noqa: N801
             hdrs = {k.lower(): v for k, v in self.headers.items()}
             set_vercel_headers(hdrs)
 
+    def _resolve_route(self) -> tuple[str, dict[str, list[str]]]:
+        """Resolve original request path and query parameters across Vercel rewrites."""
+        parsed = urllib.parse.urlparse(self.path)
+        qs = urllib.parse.parse_qs(parsed.query)
+        raw_path = parsed.path
+
+        if "__route" in qs and qs["__route"]:
+            routed = qs["__route"][0]
+            if not routed.startswith("/"):
+                routed = f"/{routed}"
+            raw_path = routed
+
+        clean_path = raw_path.rstrip("/") or "/"
+        return clean_path, qs
+
     def _send_json(self, data: Any, status: int = 200) -> None:
         payload = json.dumps(data).encode("utf-8")
         self.send_response(status)
@@ -76,9 +91,7 @@ class handler(BaseHTTPRequestHandler):  # noqa: N801
 
     def do_GET(self) -> None:  # noqa: N802
         self._register_oidc_headers()
-        parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path
-        qs = urllib.parse.parse_qs(parsed.query)
+        path, qs = self._resolve_route()
 
         if path == "/api/saved":
             self._send_json(
@@ -154,7 +167,7 @@ class handler(BaseHTTPRequestHandler):  # noqa: N801
             return
 
         # Serve static frontend files if routed here
-        rel_name = "index.html" if path in ("", "/") else path.lstrip("/")
+        rel_name = "index.html" if path in ("", "/", "/api/index.py") else path.lstrip("/")
         if rel_name.startswith("static/"):
             rel_name = rel_name[len("static/"):]
         static_file = (STATIC_DIR / rel_name).resolve()
@@ -172,12 +185,11 @@ class handler(BaseHTTPRequestHandler):  # noqa: N801
             self.wfile.write(content)
             return
 
-        self._send_json({"error": "Not found"}, status=404)
+        self._send_json({"error": f"Not found: {path}"}, status=404)
 
     def do_POST(self) -> None:  # noqa: N802
         self._register_oidc_headers()
-        parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path
+        path, _qs = self._resolve_route()
         body = self._read_json_body()
 
         if path == "/api/lookup":
@@ -195,4 +207,4 @@ class handler(BaseHTTPRequestHandler):  # noqa: N801
             self._send_json(res_data, status=status_code)
             return
 
-        self._send_json({"error": "Not found"}, status=404)
+        self._send_json({"error": f"Not found: {path}"}, status=404)
