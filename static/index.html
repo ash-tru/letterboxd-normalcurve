@@ -12,13 +12,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap"
     rel="stylesheet"
   />
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=2" />
-  <link rel="shortcut icon" href="/favicon.svg?v=2" />
-  <link rel="apple-touch-icon" href="/favicon.svg?v=2" />
-  <link rel="stylesheet" href="/styles.css?v=20" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=4" />
+  <link rel="shortcut icon" href="/favicon.svg?v=4" />
+  <link rel="apple-touch-icon" href="/favicon.svg?v=4" />
+  <link rel="stylesheet" href="/styles.css?v=51" />
 </head>
 <body>
   <header class="topbar">
@@ -28,8 +28,8 @@
           <svg
             class="brand-bell-logo"
             viewBox="0 0 60 24"
-            width="48"
-            height="20"
+            width="46"
+            height="19"
             aria-hidden="true"
             focusable="false"
           >
@@ -62,7 +62,7 @@
               clip-path="url(#bellSegLeft)"
               fill="none"
               stroke="#ff8000"
-              stroke-width="2.8"
+              stroke-width="2.6"
               stroke-linecap="round"
             />
             <use
@@ -70,7 +70,7 @@
               clip-path="url(#bellSegCenter)"
               fill="none"
               stroke="#00e054"
-              stroke-width="2.8"
+              stroke-width="2.6"
               stroke-linecap="round"
             />
             <use
@@ -78,36 +78,39 @@
               clip-path="url(#bellSegRight)"
               fill="none"
               stroke="#40bcf4"
-              stroke-width="2.8"
+              stroke-width="2.6"
               stroke-linecap="round"
             />
             <!-- Subtle baseline axis -->
-            <line x1="2" y1="21" x2="19" y2="21" stroke="#ff8000" stroke-width="1.4" stroke-opacity="0.55" />
-            <line x1="21" y1="21" x2="39" y2="21" stroke="#00e054" stroke-width="1.4" stroke-opacity="0.55" />
-            <line x1="41" y1="21" x2="58" y2="21" stroke="#40bcf4" stroke-width="1.4" stroke-opacity="0.55" />
+            <line x1="2" y1="21" x2="19" y2="21" stroke="#ff8000" stroke-width="1.2" stroke-opacity="0.55" />
+            <line x1="21" y1="21" x2="39" y2="21" stroke="#00e054" stroke-width="1.2" stroke-opacity="0.55" />
+            <line x1="41" y1="21" x2="58" y2="21" stroke="#40bcf4" stroke-width="1.2" stroke-opacity="0.55" />
           </svg>
           <h1 class="brand-title">Letterbox Bell Curve</h1>
         </div>
 
         <!-- Primary App Mode Switcher on the Left: Add Movie vs Full List Mode -->
         <div class="segmented" id="appModeSwitcher">
-          <button type="button" class="seg-btn active" data-appmode="add">
+          <button type="button" class="seg-btn active" data-appmode="add" data-mobile-label="Add Movie" id="addAppModeBtn">
             + Add Movie
           </button>
-          <button type="button" class="seg-btn" data-appmode="full">
+          <button type="button" class="seg-btn" data-appmode="full" data-mobile-label="Full List">
             &#x2630; Full List Mode
           </button>
         </div>
       </div>
 
+      <button type="button" id="mobileProfileBtn" class="mobile-profile-btn hidden" aria-controls="mobileProfilePanel" aria-expanded="false">
+        <span id="mobileProfileName"></span>
+        <span id="mobileSaveStatus" class="mobile-save-status" role="status"></span>
+        <span class="mobile-profile-chevron" aria-hidden="true"></span>
+      </button>
+
       <!-- Right Side: Letterboxd Account Details + Single Load/Re-sync Form -->
-      <div class="topbar-right">
-        <div class="profile-badge hidden" id="activeProfileBadge">
-          <img id="profileAvatar" class="profile-avatar hidden" alt="" />
-          <div class="profile-meta">
-            <a id="profileNameLink" href="#" target="_blank" rel="noopener noreferrer" class="profile-name"></a>
-            <span id="profileFilmCounts" class="profile-counts"></span>
-          </div>
+      <div class="topbar-right" id="mobileProfilePanel">
+        <div id="savedSessionsBar" class="saved-sessions hidden">
+          <span class="saved-label">Saved:</span>
+          <div id="savedSessionsList" class="saved-chips"></div>
         </div>
 
         <form id="lookupForm" class="lookup-form">
@@ -125,25 +128,25 @@
             type="submit"
             class="btn btn-primary btn-sm"
             id="lookupBtn"
+            data-mobile-label="Load"
             title="Load watched movies for this Letterboxd username"
           >
             Load Profile
           </button>
-          <label class="toggle-switch lookup-unrated-toggle">
-            <input type="checkbox" id="includeUnratedToggle" checked />
-            <span>Include unrated</span>
-          </label>
         </form>
       </div>
     </div>
   </header>
 
   <main class="container">
-    <!-- Compact Status & Saved Sessions Bar -->
+    <!-- Compact Profile & Save Status Bar -->
     <div class="status-strip">
-      <div id="savedSessionsBar" class="saved-sessions hidden">
-        <span class="saved-label">Saved:</span>
-        <div id="savedSessionsList" class="saved-chips"></div>
+      <div class="profile-badge hidden" id="activeProfileBadge">
+        <img id="profileAvatar" class="profile-avatar hidden" alt="" />
+        <div class="profile-meta">
+          <a id="profileNameLink" href="#" target="_blank" rel="noopener noreferrer" class="profile-name"></a>
+          <span id="profileFilmCounts" class="profile-counts"></span>
+        </div>
       </div>
 
       <div id="globalOptionsBar" class="global-options hidden">
@@ -163,12 +166,47 @@
 
     <div id="errorBanner" class="alert alert-error hidden"></div>
 
+    <dialog id="unratedDialog" class="unrated-dialog" aria-labelledby="unratedDialogTitle">
+      <form method="dialog">
+        <h2 id="unratedDialogTitle">Unrated films found</h2>
+        <p id="unratedDialogMessage"></p>
+        <div class="unrated-dialog-actions">
+          <button type="submit" value="exclude" class="btn btn-secondary">Exclude unrated</button>
+          <button type="submit" value="include" class="btn btn-primary">Include unrated</button>
+        </div>
+      </form>
+    </dialog>
+
     <!-- ================================================================== -->
     <!-- DEFAULT MODE: ADD MOVIE (BINARY SEARCH A vs B -> BELL CURVE RATE)  -->
     <!-- ================================================================== -->
     <section id="addMovieModeSection">
+      <div id="addMovieEmptyState" class="empty-state">
+        <p>Enter your Letterboxd username above and load your profile to start rating movies.</p>
+      </div>
+
+      <div id="profileSetupPage" class="card profile-setup hidden">
+        <span class="profile-setup-kicker">Your starting point</span>
+        <h2>Your ratings don't match the bell curve yet</h2>
+        <p id="profileSetupSummary"></p>
+        <p>Open Full List Mode to sort your movies and see their target ratings. Sorting alone won't change your Letterboxd ratings; update them on Letterboxd, then re-sync your profile here to check again.</p>
+        <button type="button" class="btn btn-primary" id="profileSetupOpenFullBtn">
+          Sort Movies in Full List Mode &rarr;
+        </button>
+        <div class="profile-setup-chart">
+          <div class="chart-card-header">
+            <h3>Current vs target ratings</h3>
+            <div class="chart-legend">
+              <span class="legend-item"><i class="swatch swatch-orig"></i> Original</span>
+              <span class="legend-item"><i class="swatch swatch-bell"></i> Bell Curve</span>
+            </div>
+          </div>
+          <div id="profileSetupChart" class="bell-chart"></div>
+        </div>
+      </div>
+
       <!-- Add Movie Entry Card -->
-      <div class="card add-entry-card">
+      <div id="addMovieEntryCard" class="card add-entry-card hidden">
         <form id="addMovieForm" class="add-movie-form">
           <div class="add-field add-field-movie">
             <label for="newMovieInput">Movie to Rate &amp; Add to Bell Curve</label>
@@ -192,21 +230,15 @@
         <!-- Candidate film picker if search returns multiple matches -->
         <div id="filmSearchCandidates" class="candidate-strip hidden"></div>
 
-        <!-- Pre-Flight Profile Bell-Curve Check Banner -->
-        <div id="profileHealthBanner" class="profile-health-banner hidden"></div>
       </div>
 
       <!-- Binary Search Arena for the New Movie -->
       <div id="addMovieBattleCard" class="card battle-card hidden">
         <div class="battle-controls-top">
-          <div class="battle-scope-group">
-            <span class="badge badge-orange" id="addBinaryStepBadge">Step 1</span>
-            <span class="badge badge-blue" id="addBinaryRangeBadge">#1 – #N</span>
-            <span class="muted-meta" id="addBinaryEstRemaining"></span>
-          </div>
           <div class="battle-stats">
+            <span class="muted-meta" id="addBinaryEstRemaining"></span>
             <button type="button" class="btn btn-ghost btn-sm" id="addBinaryUndoBtn" disabled>
-              &#x21B6; Undo
+              &#x21B6; Back
             </button>
             <button type="button" class="btn btn-ghost btn-sm" id="addBinaryRestartBtn">
               &#x21BB; Restart
@@ -227,22 +259,19 @@
             <div class="contender-info">
               <span class="contender-rank" id="addBattleLeftRank"></span>
               <h4 class="contender-title" id="addBattleLeftTitle"></h4>
-              <span class="contender-stars" id="addBattleLeftStars"></span>
             </div>
             <span class="choose-pill">&larr; Prefer New Movie</span>
           </button>
 
           <div class="battle-vs-col">
-            <div class="battle-vs">VS</div>
+            <div class="battle-vs">vs</div>
           </div>
 
           <button type="button" class="battle-contender" id="addBattleRightBtn">
             <div class="contender-seed-badge" id="addBattleRightSeed">Benchmark</div>
             <div class="contender-poster-wrap" id="addBattleRightPoster"></div>
             <div class="contender-info">
-              <span class="contender-rank" id="addBattleRightRank"></span>
               <h4 class="contender-title" id="addBattleRightTitle"></h4>
-              <span class="contender-stars" id="addBattleRightStars"></span>
             </div>
             <span class="choose-pill">Prefer Benchmark &rarr;</span>
           </button>
@@ -287,10 +316,10 @@
       <!-- Primary 2-View Bar (Full Width) -->
       <div class="workspace-nav">
         <div class="primary-step-tabs" role="tablist" aria-label="Full List Views">
-          <button type="button" class="primary-step-btn active" data-step="step2">
+          <button type="button" class="primary-step-btn active" data-step="step2" data-mobile-label="Sort Movies">
             1. Sort Movies
           </button>
-          <button type="button" class="primary-step-btn" data-step="step3">
+          <button type="button" class="primary-step-btn" data-step="step3" data-mobile-label="Bell Curve Table">
             2. Bell Curve Table
           </button>
         </div>
@@ -302,20 +331,16 @@
       <section id="step2Panel" class="step-panel">
         <div class="toolbar">
           <div class="segmented">
-            <button type="button" class="seg-btn active" data-sortmode="list">
+            <button type="button" class="seg-btn active" data-sortmode="list" data-mobile-label="&#x2630; List">
               &#x2630; List Sorter
             </button>
-            <button type="button" class="seg-btn" data-sortmode="battle">
-              &#x1F3AF; Binary Search (A vs B)
+            <button type="button" class="seg-btn" data-sortmode="tournament" data-mobile-label="&#x1F3C6; Tournament">
+              &#x1F3C6; Full Tournament (A vs B)
+            </button>
+            <button type="button" class="seg-btn" data-sortmode="battle" data-mobile-label="&#x1F3AF; Single Movie">
+              &#x1F3AF; Single Movie Rate (A vs B)
             </button>
           </div>
-
-          <input
-            type="search"
-            id="step2SearchInput"
-            class="search-input"
-            placeholder="Filter title or year..."
-          />
 
           <div class="workspace-actions">
             <span id="step2SummaryMeta" class="muted-meta"></span>
@@ -351,9 +376,10 @@
               </div>
 
               <div class="battle-stats">
-                <span class="badge badge-orange" id="binaryStepBadge">Step 1</span>
-                <span class="badge badge-blue" id="binaryRangeBadge">#1 – #N</span>
                 <span class="muted-meta" id="binaryEstRemaining"></span>
+                <button type="button" class="btn btn-ghost btn-sm" id="binaryBackBtn" disabled>
+                  &#x21B6; Back
+                </button>
                 <button type="button" class="btn btn-ghost btn-sm" id="binaryRestartBtn">
                   &#x21BB; Restart
                 </button>
@@ -374,28 +400,71 @@
                   <div class="contender-seed-badge" id="battleLeftSeed">Film Being Ranked</div>
                   <div class="contender-poster-wrap" id="battleLeftPoster"></div>
                   <div class="contender-info">
-                    <span class="contender-rank" id="battleLeftRank"></span>
                     <h4 class="contender-title" id="battleLeftTitle"></h4>
-                    <span class="contender-stars" id="battleLeftStars"></span>
                   </div>
                   <span class="choose-pill">&larr; Prefer Left</span>
                 </button>
 
                 <div class="battle-vs-col">
-                  <div class="battle-vs">VS</div>
+                  <div class="battle-vs">vs</div>
                 </div>
 
                 <button type="button" class="battle-contender" id="battleRightBtn">
                   <div class="contender-seed-badge" id="battleRightSeed">Benchmark Film</div>
                   <div class="contender-poster-wrap" id="battleRightPoster"></div>
                   <div class="contender-info">
-                    <span class="contender-rank" id="battleRightRank"></span>
                     <h4 class="contender-title" id="battleRightTitle"></h4>
-                    <span class="contender-stars" id="battleRightStars"></span>
                   </div>
                   <span class="choose-pill">Prefer Right &rarr;</span>
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="tournamentSortSubpanel" class="hidden">
+          <div class="card battle-card">
+            <div class="battle-controls-top">
+              <div id="tournamentStatus">
+                <h4 id="tournamentStatusHeading">Full Tournament</h4>
+                <p id="tournamentStatusText" class="muted-meta">Sort your entire list through head-to-head comparisons. Your current order stays unchanged until you apply the result.</p>
+              </div>
+              <div class="tournament-actions">
+                <button type="button" class="btn btn-ghost btn-sm hidden" id="tournamentBackBtn" disabled>&#x21B6; Back</button>
+                <button type="button" class="btn btn-primary btn-sm" id="tournamentStartBtn">Start Tournament</button>
+                <button type="button" class="btn btn-ghost btn-sm hidden" id="tournamentCancelBtn">Discard Tournament</button>
+              </div>
+            </div>
+            <div id="tournamentActive" class="hidden">
+              <div class="progress-track tournament-progress-track">
+                <div id="tournamentProgressFill" class="progress-fill" style="width: 0%"></div>
+              </div>
+              <h3 class="battle-prompt">Which movie do you rank higher?</h3>
+              <div class="battle-arena">
+                <button type="button" class="battle-contender" id="tournamentLeftBtn">
+                  <div class="contender-seed-badge">Movie A</div>
+                  <div class="contender-poster-wrap" id="tournamentLeftPoster"></div>
+                  <div class="contender-info">
+                    <h4 class="contender-title" id="tournamentLeftTitle"></h4>
+                  </div>
+                  <span class="choose-pill">&larr; Prefer Left</span>
+                </button>
+                <div class="battle-vs-col"><div class="battle-vs">vs</div></div>
+                <button type="button" class="battle-contender" id="tournamentRightBtn">
+                  <div class="contender-seed-badge">Movie B</div>
+                  <div class="contender-poster-wrap" id="tournamentRightPoster"></div>
+                  <div class="contender-info">
+                    <h4 class="contender-title" id="tournamentRightTitle"></h4>
+                  </div>
+                  <span class="choose-pill">Prefer Right &rarr;</span>
+                </button>
+              </div>
+            </div>
+            <button type="button" class="btn btn-primary hidden" id="tournamentApplyBtn">Apply Completed Order</button>
+            <div id="tournamentOrderPreview" class="tournament-order-preview hidden">
+              <h4 id="tournamentOrderPreviewHeading">Proposed ranking</h4>
+              <p id="tournamentOrderPreviewNote" class="muted-meta">Your current order will not change until you apply this result.</p>
+              <ol id="tournamentOrderPreviewList" class="tournament-order-list"></ol>
             </div>
           </div>
         </div>
@@ -468,14 +537,6 @@
               class="search-input"
               placeholder="Search film title..."
             />
-            <select id="step3DeltaFilter">
-              <option value="all">All Films</option>
-              <option value="changed_rating">Only Changed (&Delta; &ne; 0)</option>
-              <option value="upgraded">Upgraded (+&starf;)</option>
-              <option value="downgraded">Downgraded (&minus;&starf;)</option>
-              <option value="unchanged">Unchanged (=)</option>
-              <option value="unrated">Unrated</option>
-            </select>
           </div>
         </div>
 
@@ -504,6 +565,7 @@
     </div>
   </main>
 
-  <script src="/app.js?v=23"></script>
+  <script src="/tournament.js?v=3"></script>
+  <script src="/app.js?v=47"></script>
 </body>
 </html>

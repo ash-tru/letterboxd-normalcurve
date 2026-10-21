@@ -18,11 +18,11 @@ const state = {
   session: null,
   appMode: "add", // "add" (default) | "full"
   activeStep: "step2",
-  sortMode: "list", // "list" | "battle"
+  sortMode: "list", // "list" | "battle" | "tournament"
+  tournament: null,
+  tournamentApplied: null,
   step2Tier: "all",
-  step2Search: "",
   step3Search: "",
-  step3Delta: "all",
   step3Bucket: "all",
   step3OnlyChanged: false,
   step2RenderLimit: 300,
@@ -34,6 +34,7 @@ const state = {
     leftSlug: null,
     rightSlug: null,
     binaryState: null, // { targetSlug, low, high, mid, step, maxSteps }
+    history: [],
     lastPlacedMessage: null,
   },
   // Default Add Movie Mode state
@@ -316,7 +317,7 @@ function getLocalSavedProfiles() {
     const raw = window.localStorage.getItem(LOCAL_SAVED_PROFILES_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed) ? parsed.slice(0, 2) : [];
   } catch (_e) {
     return [];
   }
@@ -336,7 +337,7 @@ function recordLocalSavedProfile(sessionData) {
     });
     window.localStorage.setItem(
       LOCAL_SAVED_PROFILES_KEY,
-      JSON.stringify(existing.slice(0, 12))
+      JSON.stringify(existing.slice(0, 2))
     );
   } catch (_e) {
     // ignore storage errors in private browsing
@@ -344,10 +345,19 @@ function recordLocalSavedProfile(sessionData) {
   loadSavedSessionsList();
 }
 
+function setSaveStatus(text) {
+  const indicator = document.getElementById("saveStatusIndicator");
+  const mobileStatus = document.getElementById("mobileSaveStatus");
+  if (indicator) indicator.textContent = text;
+  if (mobileStatus) {
+    mobileStatus.textContent = text === "Saved ✓" ? "" : text === "Saving..." ? "…" : text;
+    mobileStatus.setAttribute("aria-label", text === "Saved ✓" ? "Saved" : text);
+  }
+}
+
 function schedulePersistOrder(addedFilm = null) {
   if (!state.session) return;
-  const indicator = document.getElementById("saveStatusIndicator");
-  if (indicator) indicator.textContent = "Saving...";
+  setSaveStatus("Saving...");
 
   if (state.saveTimer) clearTimeout(state.saveTimer);
   state.saveTimer = setTimeout(async () => {
@@ -374,11 +384,13 @@ function schedulePersistOrder(addedFilm = null) {
         if (addedFilm && data.session) {
           state.session = data.session;
         }
-        if (indicator) indicator.textContent = "Saved ✓";
+        setSaveStatus("Saved ✓");
         recordLocalSavedProfile(state.session);
+      } else {
+        setSaveStatus("Save Error");
       }
     } catch (_err) {
-      if (indicator) indicator.textContent = "Save Error";
+      setSaveStatus("Save Error");
     }
   }, addedFilm ? 40 : 300);
 }
@@ -397,8 +409,8 @@ function loadSavedSessionsList() {
   list.innerHTML = sessions
     .map(
       (s) => `
-      <button type="button" class="saved-chip" data-user="${escapeHtml(s.username)}">
-        <strong>@${escapeHtml(s.username)}</strong>${s.total_films ? ` (${s.total_films})` : ""}
+      <button type="button" class="saved-chip" data-user="${escapeHtml(s.username)}" title="@${escapeHtml(s.username)}">
+        <strong>@${escapeHtml(s.username)}</strong>
       </button>
     `
     )
@@ -442,12 +454,53 @@ function updateLookupButtonState() {
   const loadedUser = normalizeUsernameClient(state.session?.username || "");
   if (loadedUser && typedUser === loadedUser) {
     btn.innerHTML = "&#x21bb; Re-sync (Keeps Order)";
+    btn.dataset.mobileLabel = "↻ Resync";
     btn.title =
       "Re-sync new watched movies & ratings from Letterboxd without changing your existing manual sort order";
   } else {
     btn.textContent = "Load Profile";
+    btn.dataset.mobileLabel = "Load";
     btn.title = "Load watched movies for this Letterboxd username";
   }
+}
+
+function askIncludeUnrated(count) {
+  const dialog = document.getElementById("unratedDialog");
+  document.getElementById("unratedDialogMessage").textContent =
+    `${count} unrated ${count === 1 ? "film was" : "films were"} found. Include ${count === 1 ? "it" : "them"} in your bell curve?`;
+  dialog.returnValue = "";
+  dialog.showModal();
+  return new Promise((resolve) => {
+    dialog.addEventListener("close", () => resolve(dialog.returnValue), { once: true });
+  });
+}
+
+async function completeLookupSession(sessionData) {
+  let session = sessionData;
+  if (session.unrated_films_count > 0) {
+    setProgress(false);
+    const choice = await askIncludeUnrated(session.unrated_films_count);
+    if (!choice) return null;
+    const includeUnrated = choice === "include";
+    if (includeUnrated !== Boolean(session.settings.include_unrated)) {
+      const res = await fetch("/api/save-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: session.username,
+          include_unrated: includeUnrated,
+          ordered_slugs: session.bell_curve.films.map((film) => film.slug),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error || !data.session) {
+        throw new Error(data.error || "Failed to update unrated film preference.");
+      }
+      session = data.session;
+    }
+  }
+  applySession(session);
+  return session;
 }
 
 async function startLookup(usernameRaw, forceRefresh = false) {
@@ -459,7 +512,6 @@ async function startLookup(usernameRaw, forceRefresh = false) {
   }
 
   const maxPagesNum = 139; // Default: up to 10,000 films
-  const includeUnrated = document.getElementById("includeUnratedToggle").checked;
   const startBtn = document.getElementById("startAddMovieBtn");
   const lookupBtn = document.getElementById("lookupBtn");
   if (startBtn) startBtn.disabled = true;
@@ -488,7 +540,9 @@ async function startLookup(usernameRaw, forceRefresh = false) {
         username: cleanUser,
         force_refresh: forceRefresh,
         max_pages: maxPagesNum,
-        include_unrated: includeUnrated,
+        include_unrated: forceRefresh && state.session
+          ? Boolean(state.session.settings.include_unrated)
+          : true,
         ordered_slugs: currentSlugs,
       }),
     });
@@ -498,12 +552,7 @@ async function startLookup(usernameRaw, forceRefresh = false) {
     }
 
     if (data.status === "completed" && data.session) {
-      setProgress(false);
-      if (startBtn) startBtn.disabled = false;
-      if (lookupBtn) lookupBtn.disabled = false;
-      applySession(data.session);
-      loadSavedSessionsList();
-      return data.session;
+      return await completeLookupSession(data.session);
     }
 
     // Poll job status (local server mode)
@@ -516,12 +565,7 @@ async function startLookup(usernameRaw, forceRefresh = false) {
         throw new Error(jdata.error || "Error scraping Letterboxd profile.");
       }
       if (jdata.status === "completed" && jdata.session) {
-        setProgress(false);
-        if (startBtn) startBtn.disabled = false;
-        if (lookupBtn) lookupBtn.disabled = false;
-        applySession(jdata.session);
-        loadSavedSessionsList();
-        return jdata.session;
+        return await completeLookupSession(jdata.session);
       }
       const curr = jdata.current_page || 0;
       const tot = Math.max(1, jdata.total_pages || 1);
@@ -533,11 +577,12 @@ async function startLookup(usernameRaw, forceRefresh = false) {
       );
     }
   } catch (err) {
+    showError(err.message || String(err));
+    return null;
+  } finally {
     setProgress(false);
     if (startBtn) startBtn.disabled = false;
     if (lookupBtn) lookupBtn.disabled = false;
-    showError(err.message || String(err));
-    return null;
   }
 }
 
@@ -558,13 +603,46 @@ function switchAppMode(mode) {
   renderAll();
 }
 
+function toggleMobileProfile() {
+  const open = document.body.classList.toggle("mobile-profile-open");
+  document.getElementById("mobileProfileBtn").setAttribute("aria-expanded", String(open));
+  if (!open) document.getElementById("usernameInput").blur();
+}
+
 function applySession(sessionData) {
   state.session = sessionData;
+  if (state.tournamentApplied && (
+    state.tournamentApplied.username !== sessionData.username ||
+    !Array.isArray(sessionData.bell_curve?.films) ||
+    state.tournamentApplied.slugs.length !== sessionData.bell_curve.films.length ||
+    state.tournamentApplied.slugs.some((slug, i) => slug !== sessionData.bell_curve.films[i].slug)
+  )) {
+    state.tournamentApplied = null;
+  }
+  state.addMovie.binary = null;
+  state.addMovie.result = null;
+  document.body.classList.add("has-profile");
+  document.body.classList.remove("mobile-profile-open");
+  const mobileProfileBtn = document.getElementById("mobileProfileBtn");
+  mobileProfileBtn.classList.remove("hidden");
+  mobileProfileBtn.setAttribute("aria-expanded", "false");
+  mobileProfileBtn.setAttribute("aria-label", `Change Letterboxd profile: @${sessionData.username}`);
+  document.getElementById("mobileProfileName").textContent = `@${sessionData.username}`;
+  setSaveStatus("Saved ✓");
+  state.battle.binaryState = null;
+  state.battle.history = [];
+  state.battle.lastPlacedMessage = null;
+  if (state.tournament && !TournamentSort.matches(
+    state.tournament, sessionData.username, sessionData.bell_curve.films.map((film) => film.slug)
+  )) {
+    state.tournament = null;
+  }
   recordLocalSavedProfile(sessionData);
   document.getElementById("usernameInput").value = sessionData.username || "";
   updateLookupButtonState();
   document.getElementById("globalOptionsBar").classList.remove("hidden");
   document.getElementById("emptyState").classList.add("hidden");
+  document.getElementById("addMovieEmptyState").classList.add("hidden");
 
   if (state.appMode === "full") {
     document.getElementById("workspace").classList.remove("hidden");
@@ -587,9 +665,6 @@ function applySession(sessionData) {
     `${sessionData.total_films} films`;
 
   // Sync controls
-  document.getElementById("includeUnratedToggle").checked = Boolean(
-    sessionData.settings?.include_unrated ?? true
-  );
   const mean = Number(sessionData.settings?.mean ?? 2.75);
   const stdDev = Number(sessionData.settings?.std_dev ?? 1.0);
   document.getElementById("meanSlider").value = mean.toFixed(2);
@@ -608,53 +683,9 @@ function applySession(sessionData) {
 function renderAll() {
   if (!state.session) return;
   recomputeBellCurveClientSide();
-  renderProfileHealthBanner();
   renderAddMovieMode();
   renderStep2();
   renderStep3();
-}
-
-// ---------------------------------------------------------------------------
-// DEFAULT MODE: Add Movie Mode + Pre-Flight Profile Bell-Curve Check
-// ---------------------------------------------------------------------------
-
-function renderProfileHealthBanner() {
-  const banner = document.getElementById("profileHealthBanner");
-  if (!banner || !state.session) return;
-
-  const films = state.session.bell_curve?.films || [];
-  const total = films.length;
-  const mismatched = films.filter((f) => isFilmRatingChanged(f));
-  const matchedCount = total - mismatched.length;
-  const pct = total > 0 ? Math.round((matchedCount / total) * 100) : 100;
-
-  banner.classList.remove("hidden");
-  if (mismatched.length === 0) {
-    banner.className = "profile-health-banner health-ok";
-    banner.innerHTML = `
-      <div>
-        <strong>&#x2713; Bell-Curve Check Passed:</strong>
-        <span>@${escapeHtml(state.session.username)}'s ${total} films already match the 0.5&starf;&ndash;5.0&starf; bell curve (100% aligned).</span>
-      </div>
-      <button type="button" class="btn btn-ghost btn-sm" id="healthOpenFullBtn">View Full List &rarr;</button>
-    `;
-  } else {
-    banner.className = "profile-health-banner health-warn";
-    banner.innerHTML = `
-      <div>
-        <strong>Bell-Curve Profile Check (@${escapeHtml(state.session.username)}):</strong>
-        <span><strong>${matchedCount} / ${total}</strong> films (${pct}%) match the bell curve &bull; <strong>${mismatched.length}</strong> films currently differ from their bell-curve rating.</span>
-      </div>
-      <button type="button" class="btn btn-secondary btn-sm" id="healthOpenFullBtn">Calibrate in Full List &rarr;</button>
-    `;
-  }
-
-  const openBtn = document.getElementById("healthOpenFullBtn");
-  if (openBtn) {
-    openBtn.addEventListener("click", () => {
-      switchAppMode("full");
-    });
-  }
 }
 
 async function resolveAndStartAddMovie(movieQuery) {
@@ -882,6 +913,23 @@ function renderAddMovieMode() {
   const resultCard = document.getElementById("addMovieResultCard");
   if (!battleCard || !resultCard) return;
 
+  const needsSetup = isProfileSetupRequired();
+  document.getElementById("profileSetupPage").classList.toggle("hidden", !needsSetup);
+  document.getElementById("addMovieEntryCard").classList.toggle("hidden", needsSetup);
+  const addModeBtn = document.getElementById("addAppModeBtn");
+  addModeBtn.textContent = needsSetup ? "Get Started" : "+ Add Movie";
+  addModeBtn.dataset.mobileLabel = needsSetup ? "Get Started" : "Add Movie";
+  if (needsSetup) {
+    const buckets = state.session.bell_curve.buckets;
+    const differing = buckets.filter((bucket) => bucket.original_count !== bucket.bell_count).length;
+    document.getElementById("profileSetupSummary").textContent =
+      `${differing} of ${buckets.length} rating levels differ from the bell-curve target for @${state.session.username}.`;
+    document.getElementById("profileSetupChart").innerHTML = renderDistributionChart(buckets);
+    battleCard.classList.add("hidden");
+    resultCard.classList.add("hidden");
+    return;
+  }
+
   const b = state.addMovie.binary;
   const res = state.addMovie.result;
 
@@ -890,8 +938,6 @@ function renderAddMovieMode() {
     resultCard.classList.add("hidden");
 
     const pct = Math.min(98, Math.round(((b.step - 1) / Math.max(1, b.maxSteps)) * 100));
-    document.getElementById("addBinaryStepBadge").textContent = `Step ${b.step}/${b.maxSteps}`;
-    document.getElementById("addBinaryRangeBadge").textContent = `Rank #${b.low + 1} – #${b.high + 1}`;
     document.getElementById("addBinaryEstRemaining").textContent = `~${Math.max(1, b.maxSteps - b.step + 1)} left`;
     document.getElementById("addBinaryProgressFill").style.width = `${Math.max(6, pct)}%`;
     document.getElementById("addBinaryUndoBtn").disabled = b.history.length === 0;
@@ -901,16 +947,13 @@ function renderAddMovieMode() {
     if (!benchFilm) return;
 
     document.getElementById("addBattleLeftSeed").textContent = "New Movie";
-    document.getElementById("addBattleLeftPoster").innerHTML = renderPosterThumb(newFilm);
+    document.getElementById("addBattleLeftPoster").innerHTML = renderPosterThumb(newFilm, true);
     document.getElementById("addBattleLeftRank").textContent = `Testing Rank #${b.mid + 1}`;
     document.getElementById("addBattleLeftTitle").textContent = `${newFilm.title}${newFilm.year ? ` (${newFilm.year})` : ""}`;
-    document.getElementById("addBattleLeftStars").innerHTML = `<span class="muted-meta">Finding bell-curve rating...</span>`;
 
     document.getElementById("addBattleRightSeed").textContent = `Rank #${b.mid + 1}`;
-    document.getElementById("addBattleRightPoster").innerHTML = renderPosterThumb(benchFilm);
-    document.getElementById("addBattleRightRank").innerHTML = `Bell Tier: <span class="stars-green">${escapeHtml(benchFilm.bell_stars)}</span>`;
+    document.getElementById("addBattleRightPoster").innerHTML = renderPosterThumb(benchFilm, true);
     document.getElementById("addBattleRightTitle").textContent = `${benchFilm.title}${benchFilm.year ? ` (${benchFilm.year})` : ""}`;
-    document.getElementById("addBattleRightStars").innerHTML = `Original: <span class="stars-orange">${escapeHtml(formatStars(benchFilm.original_rating))}</span>`;
     return;
   }
 
@@ -1008,6 +1051,12 @@ function buildFallbackPosterUrl(film) {
 }
 
 window.handlePosterError = function handlePosterError(imgEl) {
+  const originalUrl = imgEl.getAttribute("data-original-url");
+  if (originalUrl) {
+    imgEl.removeAttribute("data-original-url");
+    imgEl.src = originalUrl;
+    return;
+  }
   const fallbackUrl = imgEl.getAttribute("data-fallback-url");
   if (fallbackUrl && imgEl.getAttribute("data-tried-fallback") !== "1") {
     imgEl.setAttribute("data-tried-fallback", "1");
@@ -1030,12 +1079,20 @@ window.handlePosterError = function handlePosterError(imgEl) {
   }
 };
 
-function renderPosterThumb(film) {
+function renderPosterThumb(film, highResolution = false) {
   const fallbackUrl = buildFallbackPosterUrl(film);
-  const primarySrc = film.poster_url || fallbackUrl;
+  const originalSrc = film.poster_url || fallbackUrl;
+  const highResSrc = highResolution
+    ? originalSrc.replace(
+      /^(https:\/\/a\.ltrbxd\.com\/resized\/film-poster\/[^?#]+)-0-150-0-225-crop\.jpg(\?[^#]*)?$/,
+      "$1-0-500-0-750-crop.jpg$2"
+    )
+    : originalSrc;
+  const primarySrc = highResSrc;
   const triedAttr = film.poster_url ? "0" : "1";
   return `<img
     src="${escapeHtml(primarySrc)}"
+    ${highResSrc !== originalSrc ? `data-original-url="${escapeHtml(originalSrc)}"` : ""}
     data-fallback-url="${escapeHtml(fallbackUrl)}"
     data-tried-fallback="${triedAttr}"
     data-title="${escapeHtml(film.title)}"
@@ -1059,27 +1116,209 @@ function renderStep2() {
   }
 
   renderStep2List();
+  if (state.sortMode === "tournament") renderTournament();
   if (state.sortMode === "battle") {
     ensureBattlePair();
     renderBattleArena();
   }
 }
 
+const TOURNAMENT_DRAFT_PREFIX = "ltrbx_tournament_v1_";
+
+function tournamentDraftKey(username) {
+  return `${TOURNAMENT_DRAFT_PREFIX}${username.toLowerCase()}`;
+}
+
+function saveTournamentDraft() {
+  try {
+    window.localStorage.setItem(
+      tournamentDraftKey(state.tournament.username),
+      JSON.stringify(state.tournament)
+    );
+  } catch (err) {
+    showError(`Could not save tournament progress: ${err.message}`);
+  }
+}
+
+function loadTournamentDraft() {
+  if (!state.session || state.tournament) return;
+  try {
+    const stored = window.localStorage.getItem(tournamentDraftKey(state.session.username));
+    if (!stored) return;
+    const draft = JSON.parse(stored);
+    const slugs = state.session.bell_curve.films.map((film) => film.slug);
+    if (draft.username !== state.session.username) {
+      showError("This saved tournament belongs to a different Letterboxd user. Start a new tournament.");
+      return;
+    }
+    if (!TournamentSort.matches(draft, state.session.username, slugs)) {
+      showError("Your film list has changed since this tournament started. Start a new tournament.");
+      return;
+    }
+    if (!Array.isArray(draft.lists) || !Array.isArray(draft.nextLists) ||
+        !Array.isArray(draft.merged) || !Number.isInteger(draft.comparisons) ||
+        !TournamentSort.pair(draft) && draft.lists.length !== 1) {
+      throw new Error("Invalid saved tournament data.");
+    }
+    if (!draft.undoBase || !Array.isArray(draft.history)) {
+      TournamentSort.enableUndo(draft);
+      showError("This tournament predates Back. You can undo new picks, or restart to undo from the beginning.");
+    }
+    state.tournament = draft;
+    saveTournamentDraft();
+  } catch (err) {
+    showError(`Could not resume tournament: ${err.message}`);
+  }
+}
+
+function renderTournamentOrderPreview(slugs, applied) {
+  const preview = document.getElementById("tournamentOrderPreview");
+  preview.classList.remove("hidden");
+  document.getElementById("tournamentOrderPreviewHeading").textContent =
+    applied ? "Saved ranking" : "Proposed ranking";
+  document.getElementById("tournamentOrderPreviewNote").textContent = applied
+    ? "This order is saved. You can also edit it in List Sorter."
+    : "Your current order will not change until you apply this result.";
+  const films = new Map(state.session.bell_curve.films.map((film) => [film.slug, film]));
+  document.getElementById("tournamentOrderPreviewList").innerHTML = slugs.map((slug, index) => {
+    const film = films.get(slug);
+    return `<li><span class="tournament-order-rank">#${index + 1}</span><span>${escapeHtml(
+      film ? `${film.title}${film.year ? ` (${film.year})` : ""}` : slug
+    )}</span></li>`;
+  }).join("");
+}
+
+function renderTournament() {
+  const draft = state.tournament;
+  const startBtn = document.getElementById("tournamentStartBtn");
+  const statusHeading = document.getElementById("tournamentStatusHeading");
+  const statusText = document.getElementById("tournamentStatusText");
+  const active = document.getElementById("tournamentActive");
+  const applyBtn = document.getElementById("tournamentApplyBtn");
+  const applied = !draft && state.tournamentApplied?.username === state.session.username
+    ? state.tournamentApplied : null;
+  startBtn.classList.toggle("hidden", Boolean(draft));
+  startBtn.textContent = applied ? "Start New Tournament" : "Start Tournament";
+  document.getElementById("tournamentCancelBtn").classList.toggle("hidden", !draft);
+  const backBtn = document.getElementById("tournamentBackBtn");
+  backBtn.classList.toggle("hidden", !draft);
+  backBtn.disabled = !draft?.history?.length;
+  active.classList.toggle("hidden", !draft || !TournamentSort.pair(draft));
+  applyBtn.classList.toggle("hidden", !draft || draft.lists.length !== 1);
+  document.getElementById("tournamentOrderPreview").classList.toggle(
+    "hidden", !applied && (!draft || draft.lists.length !== 1)
+  );
+  if (!draft) {
+    statusHeading.textContent = applied ? "Tournament saved" : "Full Tournament";
+    statusText.textContent = applied
+      ? `Completed after ${applied.comparisons} comparisons. Your new order has been saved.`
+      : "Sort your entire list through head-to-head comparisons. Your current order stays unchanged until you apply the result.";
+    if (applied) renderTournamentOrderPreview(applied.slugs, true);
+    return;
+  }
+  const done = draft.lists.length === 1;
+  statusHeading.textContent = done ? "Tournament complete" : "Remaining comparisons";
+  const plan = done ? null : TournamentSort.remaining(draft);
+  const countLabel = (min, max) =>
+    `${min === max ? min : `${min}–${max}`} ${min === max && min === 1 ? "comparison" : "comparisons"}`;
+  statusText.textContent = done
+    ? `Completed after ${draft.comparisons} comparisons. Review and apply your new order.`
+    : `${countLabel(plan.minimum, plan.maximum)} remain; exact matchups in later rounds depend on your picks.`;
+  const maxComparisons = draft.sourceSlugs.length * Math.ceil(Math.log2(draft.sourceSlugs.length));
+  document.getElementById("tournamentProgressFill").style.width =
+    `${done ? 100 : Math.min(99, Math.round(draft.comparisons / maxComparisons * 100))}%`;
+  if (done) {
+    renderTournamentOrderPreview(draft.lists[0], false);
+    return;
+  }
+  const films = state.session.bell_curve.films;
+  const filmBySlug = new Map(films.map((film) => [film.slug, film]));
+  const current = TournamentSort.pair(draft);
+  for (const [side, slug] of [["Left", current[0]], ["Right", current[1]]]) {
+    const film = filmBySlug.get(slug);
+    document.getElementById(`tournament${side}Poster`).innerHTML = renderPosterThumb(film, true);
+    document.getElementById(`tournament${side}Title`).textContent =
+      `${film.title}${film.year ? ` (${film.year})` : ""}`;
+  }
+}
+
+function chooseTournament(side) {
+  const draft = state.tournament;
+  if (!draft || !TournamentSort.pair(draft)) return;
+  if (!TournamentSort.matches(
+    draft, state.session.username, state.session.bell_curve.films.map((film) => film.slug)
+  )) {
+    showError("The movie list changed. Discard this tournament and start again.");
+    return;
+  }
+  TournamentSort.choose(draft, TournamentSort.pair(draft)[side]);
+  saveTournamentDraft();
+  renderTournament();
+}
+
+function undoTournamentChoice() {
+  if (!state.tournament || !TournamentSort.undo(state.tournament)) return;
+  saveTournamentDraft();
+  renderTournament();
+}
+
+async function applyTournament() {
+  const draft = state.tournament;
+  if (!draft || draft.lists.length !== 1) return;
+  const slugs = state.session.bell_curve.films.map((film) => film.slug);
+  if (!TournamentSort.matches(draft, state.session.username, slugs)) {
+    showError("The movie list changed. Discard this tournament and start again.");
+    return;
+  }
+  const btn = document.getElementById("tournamentApplyBtn");
+  btn.disabled = true;
+  try {
+    const res = await fetch("/api/save-order", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: draft.username,
+        ordered_slugs: draft.lists[0],
+        include_unrated: state.session.settings.include_unrated,
+        mean: state.session.settings.mean,
+        std_dev: state.session.settings.std_dev,
+        comparisons_done: (state.session.settings.comparisons_done || 0) + draft.comparisons,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error || !data.session) {
+      throw new Error(data.error || "Could not apply tournament order.");
+    }
+    let draftRemovalError = null;
+    try {
+      window.localStorage.removeItem(tournamentDraftKey(draft.username));
+    } catch (err) {
+      draftRemovalError = err;
+    }
+    state.tournament = null;
+    applySession(data.session);
+    state.tournamentApplied = {
+      username: data.session.username,
+      slugs: data.session.bell_curve.films.map((film) => film.slug),
+      comparisons: draft.comparisons,
+    };
+    renderTournament();
+    if (draftRemovalError) {
+      showError(`Order applied, but could not remove the saved draft: ${draftRemovalError.message}`);
+    }
+  } catch (err) {
+    showError(err.message || String(err));
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function renderStep2List() {
   const films = state.session?.bell_curve?.films || [];
-  const q = state.step2Search.trim().toLowerCase();
-
-  const visibleFilms = films.filter((f) => {
-    if (q) {
-      const hay = `${f.title} ${f.year || ""}`.toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-    return true;
-  });
 
   const listEl = document.getElementById("manualSortList");
-  if (!visibleFilms.length) {
-    listEl.innerHTML = `<p class="muted-meta" style="padding: 16px;">No films match the current filter.</p>`;
+  if (!films.length) {
+    listEl.innerHTML = `<p class="muted-meta" style="padding: 16px;">No films loaded.</p>`;
     return;
   }
 
@@ -1110,7 +1349,7 @@ function renderStep2List() {
   let lastTierKey = null;
   const rowsHtml = [];
   const limit = state.step2RenderLimit || 300;
-  const slicedFilms = visibleFilms.slice(0, limit);
+  const slicedFilms = films.slice(0, limit);
 
   slicedFilms.forEach((f) => {
     const tierKey = Number(f.bell_rating).toFixed(1);
@@ -1199,15 +1438,15 @@ function renderStep2List() {
     `);
   });
 
-  if (visibleFilms.length > limit) {
-    const rem = visibleFilms.length - limit;
+  if (films.length > limit) {
+    const rem = films.length - limit;
     rowsHtml.push(`
       <div class="load-more-bar">
         <button type="button" class="btn btn-secondary btn-sm" id="step2LoadMoreBtn">
           Show Next ${Math.min(500, rem)} (${rem} remaining)
         </button>
         <button type="button" class="btn btn-ghost btn-sm" id="step2LoadAllBtn">
-          Show All ${visibleFilms.length}
+          Show All ${films.length}
         </button>
       </div>
     `);
@@ -1225,12 +1464,12 @@ function renderStep2List() {
   const allBtn = document.getElementById("step2LoadAllBtn");
   if (allBtn) {
     allBtn.addEventListener("click", () => {
-      state.step2RenderLimit = visibleFilms.length;
+      state.step2RenderLimit = films.length;
       renderStep2List();
     });
   }
 
-  attachSortRowEvents(listEl, visibleFilms);
+  attachSortRowEvents(listEl, films);
 }
 
 function moveFilmInMasterList(slug, targetSlug, placeAfter = false) {
@@ -1658,6 +1897,7 @@ function startBinarySearchForFilm(targetSlug, clearBanner = true) {
     step: 1,
     maxSteps,
   };
+  state.battle.history = [];
   state.battle.leftSlug = useSlug;
   state.battle.rightSlug = others[mid].slug;
 }
@@ -1694,10 +1934,9 @@ function renderBattleArena() {
   }
 
   const pct = Math.min(98, Math.round(((bs.step - 1) / Math.max(1, bs.maxSteps)) * 100));
-  document.getElementById("binaryStepBadge").textContent = `Step ${bs.step}/${bs.maxSteps}`;
-  document.getElementById("binaryRangeBadge").textContent = `#${bs.low + 1} – #${bs.high + 1}`;
   document.getElementById("binaryProgressFill").style.width = `${Math.max(5, pct)}%`;
   document.getElementById("binaryEstRemaining").textContent = `~${Math.max(1, bs.maxSteps - bs.step + 1)} left`;
+  document.getElementById("binaryBackBtn").disabled = !state.battle.history.length;
 
   const left = films.find((f) => f.slug === state.battle.leftSlug);
   const right = films.find((f) => f.slug === state.battle.rightSlug);
@@ -1711,10 +1950,8 @@ function renderBattleArena() {
     if (seedEl) {
       seedEl.textContent = `${roleLabel} • #${film.final_rank}`;
     }
-    document.getElementById(`${prefix}Poster`).innerHTML = renderPosterThumb(film);
-    document.getElementById(`${prefix}Rank`).innerHTML = `Bell Target: <span class="stars-green">${escapeHtml(film.bell_stars)}</span>`;
+    document.getElementById(`${prefix}Poster`).innerHTML = renderPosterThumb(film, true);
     document.getElementById(`${prefix}Title`).textContent = `${film.title}${film.year ? ` (${film.year})` : ""}`;
-    document.getElementById(`${prefix}Stars`).innerHTML = `Original: <span class="stars-orange">${escapeHtml(formatStars(film.original_rating))}</span>`;
   };
 
   fillCard("battleLeft", left, "Target");
@@ -1729,6 +1966,7 @@ function handleBattleChoice(winnerSlug) {
   state.session.settings.comparisons_done = (state.session.settings.comparisons_done || 0) + 1;
   const others = films.filter((f) => f.slug !== bs.targetSlug);
   const targetWon = winnerSlug === bs.targetSlug;
+  state.battle.history.push({ low: bs.low, high: bs.high, mid: bs.mid, step: bs.step });
 
   if (targetWon) {
     bs.high = bs.mid - 1;
@@ -1761,6 +1999,17 @@ function handleBattleChoice(winnerSlug) {
   renderBattleArena();
 }
 
+function undoBattleChoice() {
+  const bs = state.battle.binaryState;
+  const prev = state.battle.history.pop();
+  if (!bs || !prev) return;
+  Object.assign(bs, prev);
+  const others = state.session.bell_curve.films.filter((film) => film.slug !== bs.targetSlug);
+  state.battle.rightSlug = others[bs.mid].slug;
+  state.battle.lastPlacedMessage = null;
+  renderBattleArena();
+}
+
 // ---------------------------------------------------------------------------
 // VIEW 2: Bell Curve Chart & Full Ranked Comparison Table
 // ---------------------------------------------------------------------------
@@ -1785,6 +2034,43 @@ function isFilmRatingChanged(film) {
   return Math.abs(Number(film.bell_rating) - Number(film.original_rating)) > 1e-4;
 }
 
+function hasMatchingDistribution() {
+  const buckets = state.session?.bell_curve?.buckets;
+  return buckets?.length === STAR_BUCKETS.length &&
+    buckets.every((bucket) => bucket.original_count === bucket.bell_count);
+}
+
+function isProfileSetupRequired() {
+  return !hasMatchingDistribution() && !state.addMovie.binary && !state.addMovie.result;
+}
+
+function renderDistributionChart(buckets) {
+  const maxBar = Math.max(
+    1,
+    ...buckets.map((b) => Math.max(b.original_count, b.bell_count))
+  );
+  return buckets.map((b) => {
+    const hOrig = Math.max(2, Math.round((b.original_count / maxBar) * 140));
+    const hBell = Math.max(2, Math.round((b.bell_count / maxBar) * 140));
+    return `
+      <div class="bell-col">
+        <div class="bell-bars-pair">
+          <div class="bar-wrap" title="Original ${b.label}: ${b.original_count} films">
+            <span class="bar-count">${b.original_count}</span>
+            <div class="bar-orig" style="height: ${hOrig}px"></div>
+          </div>
+          <div class="bar-wrap" title="Bell Curve ${b.label}: ${b.bell_count} films (${b.probability_pct}%)">
+            <span class="bar-count" style="color: var(--lb-green)">${b.bell_count}</span>
+            <div class="bar-bell" style="height: ${hBell}px"></div>
+          </div>
+        </div>
+        <span class="bell-col-label">${b.label}</span>
+        <span class="bell-col-sub">${b.probability_pct}%</span>
+      </div>
+    `;
+  }).join("");
+}
+
 function renderStep3() {
   const bc = state.session?.bell_curve;
   if (!bc) return;
@@ -1802,33 +2088,7 @@ function renderStep3() {
 
   // Render Dual Bar Chart (0.5 to 5.0)
   const buckets = bc.buckets || [];
-  const maxBar = Math.max(
-    1,
-    ...buckets.map((b) => Math.max(b.original_count, b.bell_count))
-  );
-
-  document.getElementById("bellCurveChart").innerHTML = buckets
-    .map((b) => {
-      const hOrig = Math.max(2, Math.round((b.original_count / maxBar) * 140));
-      const hBell = Math.max(2, Math.round((b.bell_count / maxBar) * 140));
-      return `
-        <div class="bell-col">
-          <div class="bell-bars-pair">
-            <div class="bar-wrap" title="Original ${b.label}: ${b.original_count} films">
-              <span class="bar-count">${b.original_count}</span>
-              <div class="bar-orig" style="height: ${hOrig}px"></div>
-            </div>
-            <div class="bar-wrap" title="Bell Curve ${b.label}: ${b.bell_count} films (${b.probability_pct}%)">
-              <span class="bar-count" style="color: var(--lb-green)">${b.bell_count}</span>
-              <div class="bar-bell" style="height: ${hBell}px"></div>
-            </div>
-          </div>
-          <span class="bell-col-label">${b.label}</span>
-          <span class="bell-col-sub">${b.probability_pct}%</span>
-        </div>
-      `;
-    })
-    .join("");
+  document.getElementById("bellCurveChart").innerHTML = renderDistributionChart(buckets);
 
   // Render Bucket Allocation Mini Table
   const tbody = document.querySelector("#bucketAllocationTable tbody");
@@ -1852,12 +2112,6 @@ function renderStep3() {
     if (state.step3OnlyChanged && !isFilmRatingChanged(f)) {
       return false;
     }
-    if (state.step3Delta === "changed_rating") {
-      if (!isFilmRatingChanged(f)) return false;
-    } else if (state.step3Delta !== "all" && f.delta_status !== state.step3Delta) {
-      return false;
-    }
-
     if (q) {
       const hay = `${f.title} ${f.year || ""}`.toLowerCase();
       if (!hay.includes(q)) return false;
@@ -1963,6 +2217,8 @@ document.addEventListener("DOMContentLoaded", () => {
     updateLookupButtonState();
   });
 
+  document.getElementById("mobileProfileBtn").addEventListener("click", toggleMobileProfile);
+
   document.getElementById("lookupForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const u = document.getElementById("usernameInput").value.trim();
@@ -1973,9 +2229,18 @@ document.addEventListener("DOMContentLoaded", () => {
     await startLookup(u, shouldForceRefresh);
   });
 
+  document.getElementById("profileSetupOpenFullBtn").addEventListener("click", () => {
+    switchAppMode("full");
+    switchStep("step2");
+  });
+
   // Add Movie Form
   document.getElementById("addMovieForm").addEventListener("submit", async (e) => {
     e.preventDefault();
+    if (isProfileSetupRequired()) {
+      showError("Your rating distribution does not match the bell curve yet. Open Full List Mode to sort and update your ratings.");
+      return;
+    }
     const u = document.getElementById("usernameInput").value.trim();
     const movieQuery = document.getElementById("newMovieInput").value.trim();
     if (!u) {
@@ -2024,11 +2289,11 @@ document.addEventListener("DOMContentLoaded", () => {
     state.addMovie.result = null;
     state.addMovie.candidates = [];
     renderCandidateStrip([], null);
-    renderAddMovieMode();
+    renderAll();
     const inp = document.getElementById("newMovieInput");
     if (inp) {
       inp.value = "";
-      inp.focus();
+      if (!isProfileSetupRequired()) inp.focus();
     }
   });
 
@@ -2036,39 +2301,12 @@ document.addEventListener("DOMContentLoaded", () => {
     switchAppMode("full");
   });
 
-  // Include Unrated toggle (persisted to cloud/server storage)
-  document.getElementById("includeUnratedToggle").addEventListener("change", async (e) => {
-    if (!state.session) return;
-    state.session.settings.include_unrated = e.target.checked;
-    const slugs = state.session.bell_curve.films.map((f) => f.slug);
-    const res = await fetch("/api/save-order", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        username: state.session.username,
-        ordered_slugs: slugs,
-        include_unrated: e.target.checked,
-        mean: state.session.settings.mean,
-        std_dev: state.session.settings.std_dev,
-      }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      applySession(data.session);
-    }
-  });
-
   // Step navigation
   document.querySelectorAll("[data-step]").forEach((tab) => {
     tab.addEventListener("click", () => switchStep(tab.dataset.step));
   });
 
-  // Step 2 search & reset
-  document.getElementById("step2SearchInput").addEventListener("input", (e) => {
-    state.step2Search = e.target.value;
-    renderStep2List();
-  });
-
+  // Step 2 reset
   document.getElementById("resetOrderBtn").addEventListener("click", async () => {
     if (!state.session) return;
     const confirmed = window.confirm(
@@ -2096,6 +2334,7 @@ document.addEventListener("DOMContentLoaded", () => {
   document.querySelectorAll("[data-sortmode]").forEach((btn) => {
     btn.addEventListener("click", () => {
       state.sortMode = btn.dataset.sortmode;
+      if (state.sortMode === "tournament") loadTournamentDraft();
       document.querySelectorAll("[data-sortmode]").forEach((b) =>
         b.classList.toggle("active", b.dataset.sortmode === state.sortMode)
       );
@@ -2105,12 +2344,48 @@ document.addEventListener("DOMContentLoaded", () => {
       document
         .getElementById("battleSortSubpanel")
         .classList.toggle("hidden", state.sortMode !== "battle");
+      document
+        .getElementById("tournamentSortSubpanel")
+        .classList.toggle("hidden", state.sortMode !== "tournament");
       if (state.sortMode === "battle") {
         ensureBattlePair();
         renderBattleArena();
+      } else if (state.sortMode === "tournament") {
+        renderTournament();
       }
     });
   });
+
+  document.getElementById("tournamentStartBtn").addEventListener("click", () => {
+    if (!state.session || state.session.bell_curve.films.length < 2) {
+      showError("Load at least two movies to start a tournament.");
+      return;
+    }
+    showError(null);
+    state.tournamentApplied = null;
+    state.tournament = TournamentSort.start(
+      state.session.username, state.session.bell_curve.films.map((film) => film.slug)
+    );
+    saveTournamentDraft();
+    renderTournament();
+  });
+
+  document.getElementById("tournamentCancelBtn").addEventListener("click", () => {
+    if (!state.tournament || !window.confirm("Discard your unfinished tournament?")) return;
+    try {
+      window.localStorage.removeItem(tournamentDraftKey(state.tournament.username));
+    } catch (err) {
+      showError(`Could not discard saved tournament: ${err.message}`);
+      return;
+    }
+    state.tournament = null;
+    renderTournament();
+  });
+
+  document.getElementById("tournamentLeftBtn").addEventListener("click", () => chooseTournament(0));
+  document.getElementById("tournamentRightBtn").addEventListener("click", () => chooseTournament(1));
+  document.getElementById("tournamentBackBtn").addEventListener("click", undoTournamentChoice);
+  document.getElementById("tournamentApplyBtn").addEventListener("click", applyTournament);
 
   // Single-Film Binary Search controls
   document.getElementById("binaryTargetFilmSelect").addEventListener("change", (e) => {
@@ -2133,6 +2408,7 @@ document.addEventListener("DOMContentLoaded", () => {
       renderBattleArena();
     }
   });
+  document.getElementById("binaryBackBtn").addEventListener("click", undoBattleChoice);
 
   document.getElementById("battleLeftBtn").addEventListener("click", () => {
     if (state.battle.leftSlug) handleBattleChoice(state.battle.leftSlug);
@@ -2167,6 +2443,18 @@ document.addEventListener("DOMContentLoaded", () => {
       } else if (e.key === "ArrowRight") {
         e.preventDefault();
         if (state.battle.rightSlug) handleBattleChoice(state.battle.rightSlug);
+      } else if (e.key === "Backspace") {
+        e.preventDefault();
+        undoBattleChoice();
+      }
+    } else if (state.appMode === "full" && state.activeStep === "step2" &&
+               state.sortMode === "tournament") {
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        e.preventDefault();
+        chooseTournament(e.key === "ArrowLeft" ? 0 : 1);
+      } else if (e.key === "Backspace") {
+        e.preventDefault();
+        undoTournamentChoice();
       }
     }
   });
@@ -2212,8 +2500,4 @@ document.addEventListener("DOMContentLoaded", () => {
     renderStep3();
   });
 
-  document.getElementById("step3DeltaFilter").addEventListener("change", (e) => {
-    state.step3Delta = e.target.value;
-    renderStep3();
-  });
 });
