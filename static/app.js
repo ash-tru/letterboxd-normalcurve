@@ -1,9 +1,9 @@
-/* LTRBX // Normal Curve Frontend */
+/* LTRBX // Preference-Weighted Rating Curve Frontend */
 
 const STAR_BUCKETS = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0];
 const DEFAULT_CENTER = 2.75;
-const RECOMMENDED_SPREAD = 1.2;
-const STANDARD_SPREAD = 1.0;
+const DEFAULT_BIAS = 0;
+const DEFAULT_SPREAD = 1.0;
 const STAR_LABELS = {
   "0.5": "½",
   "1.0": "★",
@@ -85,16 +85,66 @@ function formatDeltaBadge(delta, origRating) {
   return `<span class="delta-pill delta-same">&mdash;</span>`;
 }
 
-function applyCurvePreset(spread) {
+function resetToStandardCurve() {
   if (!state.session) return;
   state.session.settings.mean = DEFAULT_CENTER;
-  state.session.settings.std_dev = spread;
+  state.session.settings.bias = DEFAULT_BIAS;
+  state.session.settings.std_dev = DEFAULT_SPREAD;
   document.getElementById("meanSlider").value = DEFAULT_CENTER.toFixed(2);
   document.getElementById("meanValueDisplay").textContent = `${DEFAULT_CENTER.toFixed(2)}★`;
-  document.getElementById("stdSlider").value = spread.toFixed(2);
-  document.getElementById("stdValueDisplay").textContent = `${spread.toFixed(2)}★`;
+  document.getElementById("biasSlider").value = DEFAULT_BIAS.toFixed(1);
+  document.getElementById("biasValueDisplay").textContent = DEFAULT_BIAS.toFixed(1);
+  document.getElementById("stdSlider").value = DEFAULT_SPREAD.toFixed(2);
+  document.getElementById("stdValueDisplay").textContent = `${DEFAULT_SPREAD.toFixed(2)}★`;
   renderAll();
   schedulePersistOrder();
+}
+
+function validateCurveSettings(mean, bias, spread) {
+  if (![mean, bias, spread].every(Number.isFinite) ||
+      mean < 2 || mean > 3.5 || bias < 0 || bias > 3 ||
+      spread < 0.55 || spread > 1.6) {
+    throw new Error("Center must be 2–3.5, bias 0–3 and spread 0.55–1.6.");
+  }
+}
+
+function curveWeight(rating, mean, bias, spread) {
+  const gaussian = Math.exp(-0.5 * ((rating - mean) / spread) ** 2);
+  return bias === 0 ? gaussian : gaussian / (1 + Math.exp(-bias * (rating - mean)));
+}
+
+function curveProbabilities(mean, bias, spread) {
+  validateCurveSettings(mean, bias, spread);
+  const weights = STAR_BUCKETS.map((rating) => curveWeight(rating, mean, bias, spread));
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  return weights.map((weight) => weight / total);
+}
+
+function weightedQuantileGrid(mean, bias, spread) {
+  const start = mean - 8 * spread;
+  const step = 16 * spread / 1024;
+  const cdf = [0];
+  let previous = curveWeight(start, mean, bias, spread);
+  for (let i = 1; i <= 1024; i++) {
+    const current = curveWeight(start + i * step, mean, bias, spread);
+    cdf.push(cdf.at(-1) + (previous + current) * step / 2);
+    previous = current;
+  }
+  return { start, step, cdf };
+}
+
+function weightedPpf({ start, step, cdf }, quantile) {
+  const target = quantile * cdf.at(-1);
+  let low = 0;
+  let high = cdf.length - 1;
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+    if (cdf[mid] < target) low = mid + 1;
+    else high = mid;
+  }
+  const index = Math.max(0, Math.min(low - 1, cdf.length - 2));
+  const fraction = (target - cdf[index]) / (cdf[index + 1] - cdf[index]);
+  return start + (index + fraction) * step;
 }
 
 // Acklam inverse standard normal CDF for client-side instant recalculation
@@ -145,26 +195,19 @@ function recomputeNormalCurveClientSide() {
   const films = state.session.normal_curve.films || [];
   const n = films.length;
   const mean = Number(state.session.settings.mean ?? DEFAULT_CENTER);
-  const stdDev = Number(state.session.settings.std_dev ?? RECOMMENDED_SPREAD);
+  const bias = Number(state.session.settings.bias ?? DEFAULT_BIAS);
+  const stdDev = Number(state.session.settings.std_dev ?? DEFAULT_SPREAD);
+  const chances = curveProbabilities(mean, bias, stdDev);
+  const grid = bias ? weightedQuantileGrid(mean, bias, stdDev) : null;
 
-  // Compute Gaussian bucket weights
-  const weights = {};
-  let totalW = 0;
-  for (const b of STAR_BUCKETS) {
-    const w = Math.exp(-0.5 * Math.pow((b - mean) / stdDev, 2));
-    weights[b.toFixed(1)] = w;
-    totalW += w;
-  }
   const probs = {};
-  for (const b of STAR_BUCKETS) {
-    probs[b.toFixed(1)] = totalW > 0 ? weights[b.toFixed(1)] / totalW : 0.1;
-  }
+  STAR_BUCKETS.forEach((b, i) => { probs[b.toFixed(1)] = chances[i]; });
 
   // Allocate integer counts across 10 buckets
   const counts = {};
   if (n === 0) {
     for (const b of STAR_BUCKETS) counts[b.toFixed(1)] = 0;
-  } else if (Math.abs(mean - 2.75) < 1e-6) {
+  } else if (bias === 0 && Math.abs(mean - DEFAULT_CENTER) < 1e-9) {
     const pairs = [
       [0.5, 5.0],
       [1.0, 4.5],
@@ -244,7 +287,7 @@ function recomputeNormalCurveClientSide() {
 
     const q = n > 0 ? (n - rank + 0.5) / n : 0.5;
     const z = normPpf(q);
-    const cont = Math.max(0.5, Math.min(5.0, mean + z * stdDev));
+    const cont = Math.max(0.5, Math.min(5, grid ? weightedPpf(grid, q) : mean + z * stdDev));
     const pct = n > 1 ? Number((((n - rank) / (n - 1)) * 100).toFixed(1)) : 100.0;
 
     film.final_rank = rank;
@@ -283,7 +326,7 @@ function recomputeNormalCurveClientSide() {
   const meanNormal = avg(normalVals);
 
   state.session.normal_curve.total_films = n;
-  state.session.normal_curve.parameters = { mean, std_dev: stdDev };
+  state.session.normal_curve.parameters = { mean, bias, std_dev: stdDev };
   state.session.normal_curve.stats = {
     mean_original: meanOrig !== null ? Number(meanOrig.toFixed(2)) : null,
     mean_normal: meanNormal !== null ? Number(meanNormal.toFixed(2)) : null,
@@ -379,6 +422,7 @@ function schedulePersistOrder(addedFilm = null) {
 
   if (state.saveTimer) clearTimeout(state.saveTimer);
   state.saveTimer = setTimeout(async () => {
+    state.saveTimer = null;
     try {
       const slugs = state.session.normal_curve.films.map((f) => f.slug);
       const payload = {
@@ -386,6 +430,7 @@ function schedulePersistOrder(addedFilm = null) {
         ordered_slugs: slugs,
         include_unrated: state.session.settings.include_unrated,
         mean: state.session.settings.mean,
+        bias: state.session.settings.bias,
         std_dev: state.session.settings.std_dev,
         comparisons_done: state.session.settings.comparisons_done || 0,
       };
@@ -483,26 +528,15 @@ function updateLookupButtonState() {
   const typedUser = normalizeUsernameClient(inp.value);
   const loadedUser = normalizeUsernameClient(state.session?.username || "");
   if (loadedUser && typedUser === loadedUser) {
-    btn.innerHTML = "&#x21bb; Re-sync (Keeps Order)";
-    btn.dataset.mobileLabel = "↻ Resync";
+    btn.innerHTML = '<span class="lookup-desktop-label">&#x21bb; Re-sync (Keeps Order)</span>';
+    btn.dataset.mobileLabel = "Resync";
     btn.title =
       "Re-sync new watched movies & ratings from Letterboxd without changing your existing manual sort order";
   } else {
-    btn.textContent = "Load Profile";
+    btn.innerHTML = '<span class="lookup-desktop-label">Load Profile</span>';
     btn.dataset.mobileLabel = "Load";
     btn.title = "Load watched movies for this Letterboxd username";
   }
-}
-
-function askIncludeUnrated(count) {
-  const dialog = document.getElementById("unratedDialog");
-  document.getElementById("unratedDialogMessage").textContent =
-    `${count} unrated ${count === 1 ? "film was" : "films were"} found. Include ${count === 1 ? "it" : "them"} in your normal curve?`;
-  dialog.returnValue = "";
-  dialog.showModal();
-  return new Promise((resolve) => {
-    dialog.addEventListener("close", () => resolve(dialog.returnValue), { once: true });
-  });
 }
 
 function confirmAction(title, message, actionLabel) {
@@ -517,33 +551,65 @@ function confirmAction(title, message, actionLabel) {
   });
 }
 
-async function completeLookupSession(sessionData) {
-  requireCurrentSession(sessionData);
-  let session = sessionData;
-  if (session.unrated_films_count > 0) {
-    setProgress(false);
-    const choice = await askIncludeUnrated(session.unrated_films_count);
-    if (!choice) return null;
-    const includeUnrated = choice === "include";
-    if (includeUnrated !== Boolean(session.settings.include_unrated)) {
-      const res = await fetch("/api/save-order", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          username: session.username,
-          include_unrated: includeUnrated,
-          ordered_slugs: session.normal_curve.films.map((film) => film.slug),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok || data.error || !data.session) {
-        throw new Error(data.error || "Failed to update unrated film preference.");
-      }
-      session = data.session;
-    }
+function updateUnratedOptions(sessionData) {
+  const hasUnrated = sessionData.unrated_films_count > 0;
+  for (const [optionId, checkboxId] of [
+    ["desktopUnratedOption", "desktopIncludeUnrated"],
+    ["mobileUnratedOption", "mobileIncludeUnrated"],
+  ]) {
+    document.getElementById(optionId).classList.toggle("hidden", !hasUnrated);
+    document.getElementById(checkboxId).checked = Boolean(sessionData.settings.include_unrated);
   }
-  applySession(session);
-  return session;
+}
+
+async function changeIncludeUnrated(includeUnrated) {
+  if (!state.session || includeUnrated === Boolean(state.session.settings.include_unrated)) return;
+  const session = state.session;
+  const hadPendingSave = state.saveTimer !== null;
+  if (hadPendingSave) {
+    clearTimeout(state.saveTimer);
+    state.saveTimer = null;
+  }
+  const checkboxes = ["desktopIncludeUnrated", "mobileIncludeUnrated"]
+    .map((id) => document.getElementById(id));
+  checkboxes.forEach((checkbox) => { checkbox.disabled = true; });
+  setSaveStatus("Saving...");
+  showError(null);
+  try {
+    const res = await fetch("/api/save-order", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: session.username,
+        include_unrated: includeUnrated,
+        ordered_slugs: session.normal_curve.films.map((film) => film.slug),
+        mean: session.settings.mean,
+        bias: session.settings.bias,
+        std_dev: session.settings.std_dev,
+        comparisons_done: session.settings.comparisons_done || 0,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error || !data.session) {
+      throw new Error(data.error || "Could not update unrated films.");
+    }
+    if (state.session === session) applySession(data.session);
+  } catch (err) {
+    if (state.session === session) {
+      updateUnratedOptions(session);
+      setSaveStatus("Save Error");
+      showError(err.message || String(err));
+      if (hadPendingSave) schedulePersistOrder();
+    }
+  } finally {
+    checkboxes.forEach((checkbox) => { checkbox.disabled = false; });
+  }
+}
+
+function completeLookupSession(sessionData) {
+  requireCurrentSession(sessionData);
+  applySession(sessionData);
+  return sessionData;
 }
 
 function requireCurrentSession(sessionData) {
@@ -573,6 +639,13 @@ async function startLookup(usernameRaw, forceRefresh = false) {
     Array.isArray(state.session.normal_curve?.films)
       ? state.session.normal_curve.films.map((f) => f.slug)
       : undefined;
+  const currentSettings = forceRefresh && currentSlugs
+    ? {
+        mean: state.session.settings.mean,
+        bias: state.session.settings.bias,
+        std_dev: state.session.settings.std_dev,
+      }
+    : {};
 
   setProgress(
     true,
@@ -594,6 +667,7 @@ async function startLookup(usernameRaw, forceRefresh = false) {
           ? Boolean(state.session.settings.include_unrated)
           : true,
         ordered_slugs: currentSlugs,
+        ...currentSettings,
       }),
     });
     const data = await res.json();
@@ -664,6 +738,7 @@ function applySession(sessionData) {
   requireCurrentSession(sessionData);
   clearSortFollowSpace();
   state.session = sessionData;
+  updateUnratedOptions(sessionData);
   if (state.tournamentApplied && (
     state.tournamentApplied.username !== sessionData.username ||
     !Array.isArray(sessionData.normal_curve?.films) ||
@@ -720,9 +795,12 @@ function applySession(sessionData) {
 
   // Sync controls
   const mean = Number(sessionData.settings?.mean ?? DEFAULT_CENTER);
-  const stdDev = Number(sessionData.settings?.std_dev ?? RECOMMENDED_SPREAD);
+  const bias = Number(sessionData.settings?.bias ?? DEFAULT_BIAS);
+  const stdDev = Number(sessionData.settings?.std_dev ?? DEFAULT_SPREAD);
   document.getElementById("meanSlider").value = mean.toFixed(2);
   document.getElementById("meanValueDisplay").textContent = `${mean.toFixed(2)}★`;
+  document.getElementById("biasSlider").value = bias.toFixed(1);
+  document.getElementById("biasValueDisplay").textContent = bias.toFixed(1);
   document.getElementById("stdSlider").value = stdDev.toFixed(2);
   document.getElementById("stdValueDisplay").textContent = `${stdDev.toFixed(2)}★`;
 
@@ -746,7 +824,7 @@ async function resolveAndStartAddMovie(movieQuery) {
   if (!state.session) return;
   const cleanQuery = movieQuery.trim();
   if (!cleanQuery) {
-    showError("Enter a movie title to rank and add to your normal curve.");
+    showError("Enter a movie title to rank and add to your rating curve.");
     return;
   }
   showError(null);
@@ -914,7 +992,7 @@ function finishAddMoviePlacement(newFilm, othersList, insertIdx, preInsertNormal
     recomputeNormalCurveClientSide();
   }
 
-  // Compare before vs after to see which existing movies need rating adjustments to keep the normal curve
+  // Compare before vs after to see which existing movies need rating adjustments to keep the target curve
   const boundaryAdjustments = [];
   const preexistingAdjustments = [];
 
@@ -981,10 +1059,11 @@ function renderAddMovieMode() {
   addModeBtn.dataset.mobileLabel = needsSetup ? "Get Started" : "Add Movie";
   if (needsSetup) {
     const buckets = state.session.normal_curve.buckets;
-    const differing = buckets.filter((bucket) => bucket.original_count !== bucket.normal_count).length;
+    const filmCount = state.session.normal_curve.films.length;
     document.getElementById("profileSetupSummary").textContent =
-      `${differing} of ${buckets.length} rating levels differ from the normal-curve target for @${state.session.username}.`;
-    document.getElementById("profileSetupChart").innerHTML = renderDistributionChart(buckets);
+      `This shitty AI slop website shapes your star ratings into a math curve. Rank the ${filmCount} movies you've seen from #1 to #${filmCount}, and we redistribute them into star-rating buckets.`;
+    document.getElementById("profileSetupChart").innerHTML =
+      renderDistributionChart(buckets, state.session.normal_curve.parameters);
     battleCard.classList.add("hidden");
     resultCard.classList.add("hidden");
     return;
@@ -1055,7 +1134,7 @@ function renderAddMovieMode() {
         : "";
     listEl.innerHTML = `
       <div class="no-adjustments-box">
-        &#x2713; <strong>No other movies shifted tiers!</strong> Adding <em>${escapeHtml(f.title)}</em> at #${res.finalRank} keeps your normal curve balanced without changing any boundary movie.${escapeHtml(extraNote)}
+        &#x2713; <strong>No other movies shifted tiers!</strong> Adding <em>${escapeHtml(f.title)}</em> at #${res.finalRank} keeps your rating curve balanced without changing any boundary movie.${escapeHtml(extraNote)}
       </div>
     `;
   } else {
@@ -1354,6 +1433,7 @@ async function applyTournament() {
         ordered_slugs: draft.lists[0],
         include_unrated: state.session.settings.include_unrated,
         mean: state.session.settings.mean,
+        bias: state.session.settings.bias,
         std_dev: state.session.settings.std_dev,
         comparisons_done: (state.session.settings.comparisons_done || 0) + draft.comparisons,
       }),
@@ -1491,14 +1571,16 @@ function renderStep2List() {
           </div>
         </div>
 
-        <div class="orig-rating-cell" title="Original Rating">
-          <span class="mobile-cell-label">Orig:</span>
-          <span class="stars-orange">${escapeHtml(formatStars(f.original_rating))}</span>
-        </div>
+        <div class="sort-row-ratings">
+          <div class="orig-rating-cell" title="Original Rating">
+            <span class="mobile-cell-label">Orig:</span>
+            <span class="stars-orange">${escapeHtml(formatStars(f.original_rating))}</span>
+          </div>
 
-        <div class="normal-rating-cell" title="Normal-Curve Target">
-          <span class="mobile-cell-label">Normal:</span>
-          <span class="stars-green">${escapeHtml(f.normal_stars)}</span>
+          <div class="normal-rating-cell" title="Normal-Curve Target">
+            <span class="mobile-cell-label">Normal:</span>
+            <span class="stars-green">${escapeHtml(f.normal_stars)}</span>
+          </div>
         </div>
 
         <div class="row-controls">
@@ -1544,16 +1626,111 @@ function renderStep2List() {
   attachSortRowEvents(listEl, films);
 }
 
+function hideGoToMovieSuggestions() {
+  const suggestions = document.getElementById("goToMovieSuggestions");
+  suggestions.classList.add("hidden");
+  document.getElementById("goToMovieInput").setAttribute("aria-expanded", "false");
+}
+
+function showGoToMovieSuggestions() {
+  const input = document.getElementById("goToMovieInput");
+  const query = input.value.trim().toLowerCase();
+  if (!query || !state.session) {
+    hideGoToMovieSuggestions();
+    return;
+  }
+  const films = state.session.normal_curve.films
+    .filter((film) => film.title.toLowerCase().includes(query))
+    .slice(0, 8);
+  const suggestions = document.getElementById("goToMovieSuggestions");
+  suggestions.innerHTML = films.map((film) => `
+    <button type="button" data-slug="${escapeHtml(film.slug)}">
+      ${escapeHtml(film.title)}${film.year ? ` (${escapeHtml(film.year)})` : ""}
+    </button>
+  `).join("");
+  suggestions.classList.toggle("hidden", films.length === 0);
+  input.setAttribute("aria-expanded", String(films.length > 0));
+}
+
+function scrollToMovie(film) {
+  const input = document.getElementById("goToMovieInput");
+  const films = state.session.normal_curve.films;
+  input.value = `${film.title}${film.year ? ` (${film.year})` : ""}`;
+  hideGoToMovieSuggestions();
+  input.setCustomValidity("");
+  const index = films.indexOf(film);
+  if (index >= (state.step2RenderLimit || 300)) {
+    state.step2RenderLimit = index + 1;
+    renderStep2List();
+  }
+  const row = Array.from(document.getElementById("manualSortList").querySelectorAll(".sort-row"))
+    .find((item) => item.dataset.slug === film.slug);
+  if (!row) throw new Error(`Movie row not rendered for ${film.slug}`);
+  row.tabIndex = -1;
+  row.focus({ preventScroll: true });
+  row.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function goToMovie() {
+  const input = document.getElementById("goToMovieInput");
+  const query = input.value.trim().toLowerCase();
+  if (!query || !state.session) return;
+  const films = state.session.normal_curve.films;
+  const film = films.find((item) => `${item.title} (${item.year || ""})`.toLowerCase() === query)
+    || films.find((item) => item.title.toLowerCase() === query)
+    || films.find((item) => item.title.toLowerCase().startsWith(query))
+    || films.find((item) => item.title.toLowerCase().includes(query));
+  if (!film) {
+    input.setCustomValidity("No movie found with that title.");
+    input.reportValidity();
+    return;
+  }
+  scrollToMovie(film);
+}
+
 function moveFilmInMasterList(slug, targetSlug, placeAfter = false) {
   const films = state.session.normal_curve.films;
   const preview = previewFilmMove(films, slug, targetSlug, placeAfter);
   if (!preview || preview.fromIdx === preview.insertAt) return;
 
+  const previousScrollY = window.scrollY;
+  if (followMoveFrame !== null) {
+    cancelAnimationFrame(followMoveFrame);
+    followMoveFrame = null;
+  }
   const [moved] = films.splice(preview.fromIdx, 1);
   films.splice(preview.insertAt, 0, moved);
 
   renderAll();
+  keepDropViewport(previousScrollY);
   schedulePersistOrder();
+}
+
+let dropViewportFrame = null;
+
+function keepDropViewport(scrollY) {
+  if (dropViewportFrame !== null) cancelAnimationFrame(dropViewportFrame);
+  const restore = () => {
+    const listEl = document.getElementById("manualSortList");
+    if (listEl) {
+      const shortfall = Math.ceil(scrollY + window.innerHeight - document.documentElement.scrollHeight);
+      if (shortfall > 0) {
+        listEl.style.paddingBottom = `${(parseFloat(listEl.style.paddingBottom) || 0) + shortfall}px`;
+      }
+    }
+    if (window.scrollY !== scrollY) window.scrollTo(0, scrollY);
+  };
+  restore();
+  let framesRemaining = 2;
+  const settle = () => {
+    restore();
+    if (--framesRemaining > 0) {
+      dropViewportFrame = requestAnimationFrame(settle);
+    } else {
+      dropViewportFrame = null;
+    }
+  };
+  dropViewportFrame = requestAnimationFrame(settle);
 }
 
 function previewFilmMove(films, slug, targetSlug, placeAfter) {
@@ -1629,6 +1806,10 @@ function clearSortFollowSpace() {
 }
 
 function followMovedFilm(listEl, slug, action, previousTop) {
+  if (dropViewportFrame !== null) {
+    cancelAnimationFrame(dropViewportFrame);
+    dropViewportFrame = null;
+  }
   const findRow = () => Array.from(listEl.querySelectorAll(".sort-row"))
     .find((row) => row.dataset.slug === slug);
   const alignRow = () => {
@@ -1807,12 +1988,14 @@ function updateDragTargetAtPoint(clientX, clientY) {
   }
   const destinationStartsTier = preview.insertAt === 0 ||
     Number(state.session.normal_curve.films[preview.insertAt - 1].normal_rating) !== preview.rating;
+  const shiftedFilmUp = preview.fromIdx < preview.insertAt &&
+    otherShifts.some(({ before, after }) => after > before);
   listEl.querySelectorAll(".tier-separator").forEach((tier) => {
     if (Number(tier.dataset.tierRating) === preview.rating) {
       tier.classList.add("drag-rating-destination");
       if (destinationStartsTier) {
         hoveredRow.classList.remove("drag-over-top", "drag-over-bottom");
-        tier.classList.add("drag-drop-before");
+        if (!shiftedFilmUp) tier.classList.add("drag-drop-before");
       }
     }
   });
@@ -2041,6 +2224,14 @@ function startBinarySearchForFilm(targetSlug, clearBanner = true) {
   state.battle.rightSlug = others[mid].slug;
 }
 
+function startRandomBinarySearchForFilm(excludeSlug = null, clearBanner = true) {
+  const films = (state.session?.normal_curve?.films || [])
+    .filter((film) => film.slug !== excludeSlug);
+  if (!films.length) return;
+  const randomFilm = films[Math.floor(Math.random() * films.length)];
+  startBinarySearchForFilm(randomFilm.slug, clearBanner);
+}
+
 function ensureBattlePair() {
   const films = state.session?.normal_curve?.films || [];
   if (films.length < 2) return;
@@ -2049,8 +2240,7 @@ function ensureBattlePair() {
     !state.battle.binaryState ||
     !films.some((f) => f.slug === state.battle.binaryState.targetSlug)
   ) {
-    const sel = document.getElementById("binaryTargetFilmSelect");
-    startBinarySearchForFilm((sel && sel.value) || films[0].slug, false);
+    startRandomBinarySearchForFilm(null, false);
   }
 }
 
@@ -2126,7 +2316,7 @@ function handleBattleChoice(winnerSlug) {
       `✓ Placed "${targetFilm.title}" at #${newRank} (${normalStarText})`;
 
     populateBinaryTargetSelect();
-    startBinarySearchForFilm(bs.targetSlug, false);
+    startRandomBinarySearchForFilm(bs.targetSlug, false);
     renderAll();
     schedulePersistOrder();
     return;
@@ -2150,7 +2340,7 @@ function undoBattleChoice() {
 }
 
 // ---------------------------------------------------------------------------
-// VIEW 2: Normal Curve Chart & Full Ranked Comparison Table
+// VIEW 2: Rating Curve Chart & Full Ranked Comparison Table
 // ---------------------------------------------------------------------------
 
 function isFilmRatingChanged(film) {
@@ -2187,12 +2377,31 @@ async function resyncProfileSetup() {
   }
 }
 
-function renderDistributionChart(buckets) {
+function renderDistributionChart(buckets, parameters) {
   const maxBar = Math.max(
     1,
     ...buckets.map((b) => Math.max(b.original_count, b.normal_count))
   );
-  return buckets.map((b) => {
+  let curvePath = "";
+  if (buckets.length > 1) {
+    const { mean, bias, std_dev: spread } = parameters;
+    const totalWeight = buckets.reduce(
+      (sum, bucket) => sum + curveWeight(bucket.rating, mean, bias, spread), 0
+    );
+    const totalFilms = buckets.reduce((sum, b) => sum + b.normal_count, 0);
+    const firstRating = buckets[0].rating;
+    const step = (buckets[buckets.length - 1].rating - firstRating) / (buckets.length - 1);
+    curvePath = Array.from({ length: 101 }, (_, i) => {
+      const rating = firstRating + (i * buckets.length / 100 - 0.5) * step;
+      const height = curveWeight(rating, mean, bias, spread) / totalWeight *
+        totalFilms / maxBar * 140;
+      return `${i === 0 ? "M" : "L"} ${i * 10} ${(140 - height).toFixed(2)}`;
+    }).join(" ");
+  }
+  const curve = curvePath
+    ? `<svg class="normal-target-curve" viewBox="0 0 1000 140" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path d="${curvePath}"></path></svg>`
+    : "";
+  return curve + buckets.map((b) => {
     const hOrig = Math.max(2, Math.round((b.original_count / maxBar) * 140));
     const hNormal = Math.max(2, Math.round((b.normal_count / maxBar) * 140));
     return `
@@ -2202,7 +2411,7 @@ function renderDistributionChart(buckets) {
             <span class="bar-count">${b.original_count}</span>
             <div class="bar-orig" style="height: ${hOrig}px"></div>
           </div>
-          <div class="bar-wrap" title="Normal Curve ${b.label}: ${b.normal_count} films (${b.probability_pct}%)">
+          <div class="bar-wrap" title="Target Curve ${b.label}: ${b.normal_count} films (${b.probability_pct}%)">
             <span class="bar-count" style="color: var(--lb-green)">${b.normal_count}</span>
             <div class="bar-normal" style="height: ${hNormal}px"></div>
           </div>
@@ -2219,7 +2428,6 @@ function renderStep3() {
   if (!bc) return;
 
   const stats = bc.stats || {};
-
   // Compact inline stats summary
   document.getElementById("normalKpiGrid").innerHTML = `
     <span class="kpi-pill"><strong>${bc.total_films}</strong> Films</span>
@@ -2231,7 +2439,8 @@ function renderStep3() {
 
   // Render Dual Bar Chart (0.5 to 5.0)
   const buckets = bc.buckets || [];
-  document.getElementById("normalCurveChart").innerHTML = renderDistributionChart(buckets);
+  document.getElementById("normalCurveChart").innerHTML =
+    renderDistributionChart(buckets, bc.parameters);
 
   // Render Bucket Allocation Mini Table
   const tbody = document.querySelector("#bucketAllocationTable tbody");
@@ -2268,7 +2477,7 @@ function renderStep3() {
 function renderNormalComparisonTable(filteredFilms) {
   const tbody = document.getElementById("normalTableBody");
   if (!filteredFilms.length) {
-    tbody.innerHTML = `<tr><td colspan="8" class="muted-meta">No matching films found.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="muted-meta">No matching films found.</td></tr>`;
     return;
   }
 
@@ -2290,7 +2499,6 @@ function renderNormalComparisonTable(filteredFilms) {
         <td><strong class="stars-green">${escapeHtml(f.normal_stars)}</strong></td>
         <td>${formatDeltaBadge(f.rating_delta, f.original_rating)}</td>
         <td>${f.continuous_normal_score.toFixed(2)}★</td>
-        <td>${f.z_score >= 0 ? "+" : ""}${f.z_score.toFixed(2)}&sigma;</td>
       </tr>
     `
     )
@@ -2300,7 +2508,7 @@ function renderNormalComparisonTable(filteredFilms) {
     const rem = filteredFilms.length - limit;
     html += `
       <tr>
-        <td colspan="8" style="text-align: center; padding: 12px;">
+        <td colspan="7" style="text-align: center; padding: 12px;">
           <button type="button" class="btn btn-secondary btn-sm" id="step3LoadMoreBtn">
             Show Next ${Math.min(500, rem)} (${rem} remaining)
           </button>
@@ -2361,6 +2569,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById("mobileProfileBtn").addEventListener("click", toggleMobileProfile);
 
+  for (const id of ["desktopIncludeUnrated", "mobileIncludeUnrated"]) {
+    document.getElementById(id).addEventListener("change", (event) => {
+      changeIncludeUnrated(event.target.checked);
+    });
+  }
+
   document.getElementById("lookupForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const u = document.getElementById("usernameInput").value.trim();
@@ -2399,7 +2613,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     if (isProfileSetupRequired()) {
-      showError("Your rating distribution does not match the normal curve yet. Open Full List Mode to sort and update your ratings, or choose Ignore to continue.");
+      showError("Your rating distribution does not match the target curve yet. Open Full List Mode to sort and update your ratings, or choose Ignore to continue.");
       return;
     }
 
@@ -2457,6 +2671,49 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // Step 2 reset
+  document.getElementById("goToMovieForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    goToMovie();
+  });
+  document.getElementById("goToMovieInput").addEventListener("input", (e) => {
+    e.target.setCustomValidity("");
+    showGoToMovieSuggestions();
+  });
+  document.getElementById("goToMovieInput").addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") {
+      const first = document.querySelector("#goToMovieSuggestions button");
+      if (first) {
+        e.preventDefault();
+        first.focus();
+      }
+    } else if (e.key === "Escape") {
+      hideGoToMovieSuggestions();
+    }
+  });
+  document.getElementById("goToMovieSuggestions").addEventListener("keydown", (e) => {
+    const buttons = Array.from(e.currentTarget.querySelectorAll("button"));
+    if (!buttons.length) return;
+    const index = buttons.indexOf(document.activeElement);
+    if (e.key === "Escape") {
+      hideGoToMovieSuggestions();
+      document.getElementById("goToMovieInput").focus();
+    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      buttons[(index + (e.key === "ArrowDown" ? 1 : buttons.length - 1)) % buttons.length].focus();
+    }
+  });
+  document.getElementById("goToMovieSuggestions").addEventListener("click", (e) => {
+    const button = e.target.closest("button[data-slug]");
+    if (!button) return;
+    const film = state.session?.normal_curve?.films.find((item) => item.slug === button.dataset.slug);
+    if (film) scrollToMovie(film);
+  });
+  document.addEventListener("click", (e) => {
+    if (!document.getElementById("goToMovieForm").contains(e.target)) {
+      hideGoToMovieSuggestions();
+    }
+  });
+
   document.getElementById("resetOrderBtn").addEventListener("click", async () => {
     if (!state.session) return;
     const confirmed = await confirmAction(
@@ -2540,10 +2797,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   document.getElementById("binaryRandomFilmBtn").addEventListener("click", () => {
-    const films = state.session?.normal_curve?.films || [];
-    if (!films.length) return;
-    const randomFilm = films[Math.floor(Math.random() * films.length)];
-    startBinarySearchForFilm(randomFilm.slug, true);
+    startRandomBinarySearchForFilm();
     renderBattleArena();
   });
 
@@ -2605,12 +2859,21 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Step 3 Normal Curve Sliders
+  // Step 3 Rating Curve Sliders
   document.getElementById("meanSlider").addEventListener("input", (e) => {
     if (!state.session) return;
     const val = parseFloat(e.target.value);
     state.session.settings.mean = val;
     document.getElementById("meanValueDisplay").textContent = `${val.toFixed(2)}★`;
+    renderAll();
+    schedulePersistOrder();
+  });
+
+  document.getElementById("biasSlider").addEventListener("input", (e) => {
+    if (!state.session) return;
+    const val = parseFloat(e.target.value);
+    state.session.settings.bias = val;
+    document.getElementById("biasValueDisplay").textContent = val.toFixed(1);
     renderAll();
     schedulePersistOrder();
   });
@@ -2624,12 +2887,20 @@ document.addEventListener("DOMContentLoaded", () => {
     schedulePersistOrder();
   });
 
-  document.getElementById("resetCurveParamsBtn").addEventListener("click", () =>
-    applyCurvePreset(RECOMMENDED_SPREAD)
-  );
-  document.getElementById("standardCurveParamsBtn").addEventListener("click", () =>
-    applyCurvePreset(STANDARD_SPREAD)
-  );
+  for (const [id, defaultValue] of [
+    ["meanSlider", DEFAULT_CENTER],
+    ["biasSlider", DEFAULT_BIAS],
+    ["stdSlider", DEFAULT_SPREAD],
+  ]) {
+    const slider = document.getElementById(id);
+    slider.addEventListener("dblclick", () => {
+      if (!state.session) return;
+      slider.value = String(defaultValue);
+      slider.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  document.getElementById("standardCurveParamsBtn").addEventListener("click", resetToStandardCurve);
 
   document.getElementById("step3OnlyChangedToggle").addEventListener("change", (e) => {
     state.step3OnlyChanged = e.target.checked;

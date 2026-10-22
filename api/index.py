@@ -125,7 +125,7 @@ class handler(BaseHTTPRequestHandler):  # noqa: N801
             self.send_header("Content-Type", "text/csv; charset=utf-8")
             self.send_header(
                 "Content-Disposition",
-                f'attachment; filename="{clean}_letterboxd_normal_curve.csv"',
+                f'attachment; filename="{clean}_letterboxd_rating_curve.csv"',
             )
             self.send_header("Content-Length", str(len(csv_bytes)))
             self.end_headers()

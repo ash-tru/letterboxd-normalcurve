@@ -1,4 +1,4 @@
-"""Web server and REST API for Normal Curve (eggs/ltrbx)."""
+"""Web server and REST API for the rating curve (eggs/ltrbx)."""
 
 from __future__ import annotations
 
@@ -15,6 +15,8 @@ from typing import Any
 import tornado.ioloop
 import tornado.web
 from letterboxd import (
+    DEFAULT_BIAS,
+    DEFAULT_MEAN,
     DEFAULT_STD_DEV,
     compute_normal_curve_assignments,
     export_normal_curve_csv,
@@ -27,6 +29,7 @@ from letterboxd import (
     search_letterboxd_films,
     slugify_title,
     sort_films_by_rating,
+    validate_curve_settings,
 )
 from storage import (
     get_storage_backend_name,
@@ -49,11 +52,12 @@ def build_session_payload(
     raw_profile: dict[str, Any],
     include_unrated: bool = True,
     manual_order_slugs: list[str] | None = None,
-    mean: float = 2.75,
+    mean: float = DEFAULT_MEAN,
+    bias: float = DEFAULT_BIAS,
     std_dev: float = DEFAULT_STD_DEV,
     comparisons_done: int = 0,
 ) -> dict[str, Any]:
-    """Build complete session state including initial rating sort, manual sort, and normal curve."""
+    """Build complete session state including initial rating sort, manual sort, and target curve."""
     all_films = raw_profile.get("films", [])
     rating_sorted = sort_films_by_rating(all_films, include_unrated=include_unrated)
 
@@ -86,6 +90,7 @@ def build_session_payload(
     normal_curve = compute_normal_curve_assignments(
         manual_sorted,
         mean=mean,
+        bias=bias,
         std_dev=std_dev,
     )
 
@@ -102,6 +107,7 @@ def build_session_payload(
         "settings": {
             "include_unrated": include_unrated,
             "mean": mean,
+            "bias": bias,
             "std_dev": std_dev,
             "comparisons_done": comparisons_done,
         },
@@ -133,8 +139,13 @@ def process_lookup_sync(body: dict[str, Any]) -> tuple[dict[str, Any], int]:
     if not prev_slugs and existing and existing.get("normal_curve", {}).get("films"):
         prev_slugs = [f["slug"] for f in existing["normal_curve"]["films"]]
 
-    mean = float(body.get("mean", prev_settings.get("mean", 2.75)))
-    std_dev = float(body.get("std_dev", prev_settings.get("std_dev", DEFAULT_STD_DEV)))
+    try:
+        mean = float(body.get("mean", prev_settings.get("mean", DEFAULT_MEAN)))
+        bias = float(body.get("bias", prev_settings.get("bias", DEFAULT_BIAS)))
+        std_dev = float(body.get("std_dev", prev_settings.get("std_dev", DEFAULT_STD_DEV)))
+        validate_curve_settings(mean, bias, std_dev)
+    except (ValueError, TypeError) as exc:
+        return {"error": f"Invalid curve settings: {exc}"}, 400
     comparisons_done = int(body.get("comparisons_done", prev_settings.get("comparisons_done", 0)))
 
     try:
@@ -147,6 +158,7 @@ def process_lookup_sync(body: dict[str, Any]) -> tuple[dict[str, Any], int]:
             include_unrated=include_unrated,
             manual_order_slugs=prev_slugs,
             mean=mean,
+            bias=bias,
             std_dev=std_dev,
             comparisons_done=comparisons_done,
         )
@@ -157,7 +169,7 @@ def process_lookup_sync(body: dict[str, Any]) -> tuple[dict[str, Any], int]:
 
 
 def process_save_order(body: dict[str, Any]) -> tuple[dict[str, Any], int]:
-    """Update manual sort, added film, or normal-curve settings in cloud/disk storage."""
+    """Update manual sort, added film, or rating-curve settings in cloud/disk storage."""
     raw_username = str(body.get("username") or "").strip()
     try:
         username = normalize_username(raw_username)
@@ -170,8 +182,13 @@ def process_save_order(body: dict[str, Any]) -> tuple[dict[str, Any], int]:
 
     settings = existing.get("settings", {})
     include_unrated = bool(body.get("include_unrated", settings.get("include_unrated", True)))
-    mean = float(body.get("mean", settings.get("mean", 2.75)))
-    std_dev = float(body.get("std_dev", settings.get("std_dev", DEFAULT_STD_DEV)))
+    try:
+        mean = float(body.get("mean", settings.get("mean", DEFAULT_MEAN)))
+        bias = float(body.get("bias", settings.get("bias", DEFAULT_BIAS)))
+        std_dev = float(body.get("std_dev", settings.get("std_dev", DEFAULT_STD_DEV)))
+        validate_curve_settings(mean, bias, std_dev)
+    except (ValueError, TypeError) as exc:
+        return {"error": f"Invalid curve settings: {exc}"}, 400
     comparisons_done = int(body.get("comparisons_done", settings.get("comparisons_done", 0)))
     reset_to_rating_sort = bool(body.get("reset_to_rating_sort", False))
 
@@ -242,6 +259,7 @@ def process_save_order(body: dict[str, Any]) -> tuple[dict[str, Any], int]:
         include_unrated=include_unrated,
         manual_order_slugs=ordered_slugs,
         mean=mean,
+        bias=bias,
         std_dev=std_dev,
         comparisons_done=comparisons_done,
     )
@@ -370,6 +388,10 @@ class LookupHandler(BaseJsonHandler):
                 if not prev_slugs and existing and existing.get("normal_curve", {}).get("films"):
                     prev_slugs = [f["slug"] for f in existing["normal_curve"]["films"]]
 
+                mean = float(body.get("mean", prev_settings.get("mean", DEFAULT_MEAN)))
+                bias = float(body.get("bias", prev_settings.get("bias", DEFAULT_BIAS)))
+                std_dev = float(body.get("std_dev", prev_settings.get("std_dev", DEFAULT_STD_DEV)))
+                validate_curve_settings(mean, bias, std_dev)
                 profile = fetch_user_watched_films(
                     username=username,
                     max_pages=max_pages,
@@ -379,8 +401,9 @@ class LookupHandler(BaseJsonHandler):
                     raw_profile=profile,
                     include_unrated=include_unrated,
                     manual_order_slugs=prev_slugs,
-                    mean=float(prev_settings.get("mean", 2.75)),
-                    std_dev=float(prev_settings.get("std_dev", DEFAULT_STD_DEV)),
+                    mean=mean,
+                    bias=bias,
+                    std_dev=std_dev,
                     comparisons_done=int(prev_settings.get("comparisons_done", 0)),
                 )
                 save_user_session(username, session_payload)
@@ -412,7 +435,7 @@ class JobStatusHandler(BaseJsonHandler):
 
 
 class SaveOrderHandler(BaseJsonHandler):
-    """POST /api/save-order - update manual sort, added film, or normal-curve settings."""
+    """POST /api/save-order - update manual sort, added film, or rating-curve settings."""
 
     def post(self) -> None:
         body = self.get_json_body()
@@ -430,7 +453,7 @@ class ImportCsvHandler(BaseJsonHandler):
 
 
 class ExportCsvHandler(BaseJsonHandler):
-    """GET /api/export-csv/<username> - download CSV of normal-curve ratings."""
+    """GET /api/export-csv/<username> - download CSV of target ratings."""
 
     def get(self, username: str) -> None:
         try:
@@ -449,7 +472,7 @@ class ExportCsvHandler(BaseJsonHandler):
         self.set_header("Content-Type", "text/csv; charset=utf-8")
         self.set_header(
             "Content-Disposition",
-            f'attachment; filename="{clean}_letterboxd_normal_curve.csv"',
+            f'attachment; filename="{clean}_letterboxd_rating_curve.csv"',
         )
         self.finish(csv_data)
 
@@ -527,14 +550,14 @@ def make_app() -> tornado.web.Application:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Normal Curve server")
+    parser = argparse.ArgumentParser(description="Rating Curve server")
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8765")))
     parser.add_argument("--host", type=str, default="0.0.0.0")
     args = parser.parse_args()
 
     app = make_app()
     app.listen(args.port, address=args.host)
-    print(f"🎬 Normal Curve running at http://localhost:{args.port}")
+    print(f"🎬 Rating Curve running at http://localhost:{args.port}")
     tornado.ioloop.IOLoop.current().start()
 
 

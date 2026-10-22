@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Letterboxd Normal Curve</title>
-  <meta name="application-name" content="Letterboxd Normal Curve" />
-  <meta name="apple-mobile-web-app-title" content="Letterboxd Normal Curve" />
+  <title>Letterboxd Rating Curve</title>
+  <meta name="application-name" content="Letterboxd Rating Curve" />
+  <meta name="apple-mobile-web-app-title" content="Letterboxd Rating Curve" />
   <meta name="theme-color" content="#14181c" />
-  <meta property="og:title" content="Letterboxd Normal Curve" />
-  <meta property="og:site_name" content="Letterboxd Normal Curve" />
+  <meta property="og:title" content="Letterboxd Rating Curve" />
+  <meta property="og:site_name" content="Letterboxd Rating Curve" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
@@ -18,7 +18,7 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=4" />
   <link rel="shortcut icon" href="/favicon.svg?v=4" />
   <link rel="apple-touch-icon" href="/favicon.svg?v=4" />
-  <link rel="stylesheet" href="/styles.css?v=67" />
+  <link rel="stylesheet" href="/styles.css?v=87" />
 </head>
 <body>
   <header class="topbar">
@@ -56,7 +56,7 @@
             <use href="#normalAreaPath" clip-path="url(#normalSegLeft)" fill="#ff8000" fill-opacity="0.32" />
             <use href="#normalAreaPath" clip-path="url(#normalSegCenter)" fill="#00e054" fill-opacity="0.32" />
             <use href="#normalAreaPath" clip-path="url(#normalSegRight)" fill="#40bcf4" fill-opacity="0.32" />
-            <!-- Crisp 3-segment normal curve top line -->
+            <!-- Crisp 3-segment curve top line -->
             <use
               href="#normalStrokePath"
               clip-path="url(#normalSegLeft)"
@@ -86,9 +86,8 @@
             <line x1="21" y1="21" x2="39" y2="21" stroke="#00e054" stroke-width="1.2" stroke-opacity="0.55" />
             <line x1="41" y1="21" x2="58" y2="21" stroke="#40bcf4" stroke-width="1.2" stroke-opacity="0.55" />
           </svg>
-          <h1 class="brand-title">Letterboxd Normal Curve</h1>
+          <h1 class="brand-title">Letterboxd Rating Curve</h1>
         </div>
-
         <!-- Primary App Mode Switcher on the Left: Add Movie vs Full List Mode -->
         <div class="segmented" id="appModeSwitcher">
           <button type="button" class="seg-btn active" data-appmode="add" data-mobile-label="Add Movie" id="addAppModeBtn">
@@ -131,9 +130,13 @@
             data-mobile-label="Load"
             title="Load watched movies for this Letterboxd username"
           >
-            Load Profile
+            <span class="lookup-desktop-label">Load Profile</span>
           </button>
         </form>
+        <label class="toggle-switch unrated-option mobile-unrated-option hidden" id="mobileUnratedOption">
+          <input type="checkbox" id="mobileIncludeUnrated" checked />
+          Include unrated
+        </label>
       </div>
     </div>
   </header>
@@ -148,6 +151,10 @@
           <span id="profileFilmCounts" class="profile-counts"></span>
         </div>
       </div>
+      <label class="toggle-switch unrated-option hidden" id="desktopUnratedOption">
+        <input type="checkbox" id="desktopIncludeUnrated" checked />
+        Include unrated
+      </label>
 
       <div id="globalOptionsBar" class="global-options hidden">
         <span id="saveStatusIndicator" class="save-indicator">Saved Ordered List on Server</span>
@@ -165,17 +172,6 @@
     </div>
 
     <div id="errorBanner" class="alert alert-error hidden"></div>
-
-    <dialog id="unratedDialog" class="app-dialog" aria-lanormaledby="unratedDialogTitle">
-      <form method="dialog">
-        <h2 id="unratedDialogTitle">Unrated films found</h2>
-        <p id="unratedDialogMessage"></p>
-        <div class="app-dialog-actions">
-          <button type="submit" value="exclude" class="btn btn-secondary">Exclude unrated</button>
-          <button type="submit" value="include" class="btn btn-primary">Include unrated</button>
-        </div>
-      </form>
-    </dialog>
 
     <dialog id="confirmDialog" class="app-dialog" aria-lanormaledby="confirmDialogTitle" aria-describedby="confirmDialogMessage">
       <form method="dialog">
@@ -198,29 +194,29 @@
 
       <div id="profileSetupPage" class="profile-setup hidden">
         <span class="profile-setup-kicker">Your starting point</span>
-        <h2>Your ratings don't match the normal curve yet</h2>
+        <h2>Your ratings don't match the target&nbsp;curve</h2>
         <p id="profileSetupSummary"></p>
-        <p>Open Full List Mode to sort your movies and see their target ratings. Sorting alone won't change your Letterboxd ratings; update them on Letterboxd, then re-sync your profile here to check again.</p>
+        <p>Sorting here won't change your Letterboxd ratings. Update your stars there, then re-sync here to see the result.</p>
+        <div class="profile-setup-chart">
+          <div class="chart-card-header">
+            <h3>Your stars vs the target curve</h3>
+            <div class="chart-legend">
+              <span class="legend-item"><i class="swatch swatch-orig"></i> Original</span>
+              <span class="legend-item"><i class="swatch swatch-normal"></i> Target Curve</span>
+            </div>
+          </div>
+          <div id="profileSetupChart" class="normal-chart"></div>
+        </div>
         <div class="profile-setup-actions">
           <button type="button" class="btn btn-primary" id="profileSetupOpenFullBtn">
-            Sort Movies in Full List Mode &rarr;
+            Start ranking movies &rarr;
           </button>
           <button type="button" class="btn btn-secondary" id="profileSetupResyncBtn">
             Re-sync and check again
           </button>
           <button type="button" class="btn btn-ghost" id="profileSetupContinueBtn">
-            Ignore and continue to add movie to rating
+            Skip for now and add a movie
           </button>
-        </div>
-        <div class="profile-setup-chart">
-          <div class="chart-card-header">
-            <h3>Current vs target ratings</h3>
-            <div class="chart-legend">
-              <span class="legend-item"><i class="swatch swatch-orig"></i> Original</span>
-              <span class="legend-item"><i class="swatch swatch-normal"></i> Normal Curve</span>
-            </div>
-          </div>
-          <div id="profileSetupChart" class="normal-chart"></div>
         </div>
       </div>
 
@@ -228,7 +224,7 @@
       <div id="addMovieEntryCard" class="card add-entry-card hidden">
         <form id="addMovieForm" class="add-movie-form">
           <div class="add-field add-field-movie">
-            <label for="newMovieInput">Movie to Rate &amp; Add to Normal Curve</label>
+            <label for="newMovieInput">Movie to Rate &amp; Add to Rating Curve</label>
             <input
               type="text"
               id="newMovieInput"
@@ -304,7 +300,7 @@
 
         <div class="add-adjustments-section">
           <div class="adjustments-header">
-            <h4 id="adjustmentsHeading">Movies to Adjust to Keep Your Normal Curve</h4>
+            <h4 id="adjustmentsHeading">Movies to Adjust to Keep Your Rating Curve</h4>
             <label class="toggle-switch" id="showAllPreexistingWrap">
               <input type="checkbox" id="showAllPreexistingToggle" />
               <span>Include pre-existing profile mismatches</span>
@@ -342,8 +338,8 @@
           <button type="button" class="primary-step-btn active" data-step="step2" data-mobile-label="Sort Movies">
             1. Sort Movies
           </button>
-          <button type="button" class="primary-step-btn" data-step="step3" data-mobile-label="Normal Curve Table">
-            2. Normal Curve Table
+          <button type="button" class="primary-step-btn" data-step="step3" data-mobile-label="Rating Curve Table">
+            2. Rating Curve Table
           </button>
         </div>
       </div>
@@ -366,6 +362,13 @@
           </div>
 
           <div class="workspace-actions" id="step2WorkspaceActions">
+            <form id="goToMovieForm" class="go-to-movie-form" role="search">
+              <div class="go-to-movie-field">
+                <input type="search" id="goToMovieInput" class="search-input" aria-label="Go to movie" aria-controls="goToMovieSuggestions" aria-expanded="false" placeholder="Go to movie..." autocomplete="off" required />
+                <div id="goToMovieSuggestions" class="go-to-movie-suggestions hidden" aria-label="Matching movies"></div>
+              </div>
+              <button type="submit" class="btn btn-secondary btn-sm">Go</button>
+            </form>
             <span id="step2SummaryMeta" class="muted-meta"></span>
             <button type="button" class="btn btn-ghost btn-sm" id="resetOrderBtn" title="Reset manual order back to Letterboxd rating sort">
               &#x21BA; Reset Order
@@ -379,7 +382,7 @@
             <span>Rank</span>
             <span>Film</span>
             <span>Original</span>
-            <span>Normal Target</span>
+            <span>Target Rating</span>
             <span>Controls</span>
           </div>
 
@@ -495,66 +498,94 @@
       </section>
 
       <!-- ================================================================ -->
-      <!-- VIEW 2: NORMAL CURVE & FULL RANKED COMPARISON TABLE                -->
+      <!-- VIEW 2: RATING CURVE & FULL RANKED COMPARISON TABLE                -->
       <!-- ================================================================ -->
       <section id="step3Panel" class="step-panel hidden">
-        <!-- Compact Normal Curve Histogram + Sliders -->
+        <!-- Rating Curve Histogram, Settings & Bucket Allocation -->
         <div class="normal-layout">
           <div class="chart-card">
             <div class="chart-card-header">
               <div id="normalKpiGrid" class="kpi-inline"></div>
               <div class="chart-legend">
                 <span class="legend-item"><i class="swatch swatch-orig"></i> Original</span>
-                <span class="legend-item"><i class="swatch swatch-normal"></i> Normal Curve</span>
+                <span class="legend-item"><i class="swatch swatch-normal"></i> Target Curve</span>
               </div>
             </div>
             <div id="normalCurveChart" class="normal-chart"></div>
+
+            <section class="curve-settings" aria-labelledby="curveSettingsTitle">
+              <h3 class="curve-section-title" id="curveSettingsTitle">Curve settings</h3>
+              <div class="curve-settings-grid">
+                <div class="slider-group">
+                  <div class="slider-label">
+                    <label for="meanSlider">Center (&mu;)</label>
+                    <strong id="meanValueDisplay">2.75&starf;</strong>
+                  </div>
+                  <input type="range" id="meanSlider" min="2.00" max="3.50" step="0.05" value="2.75" title="Double-click to reset center" />
+                </div>
+
+                <div class="slider-group">
+                  <div class="slider-label">
+                    <label for="biasSlider">Good-movie bias (k)</label>
+                    <strong id="biasValueDisplay">0.0</strong>
+                  </div>
+                  <input type="range" id="biasSlider" min="0" max="3" step="0.1" value="0" title="Double-click to reset good-movie bias" />
+                </div>
+
+                <div class="slider-group">
+                  <div class="slider-label">
+                    <label for="stdSlider">Spread (&sigma;)</label>
+                    <strong id="stdValueDisplay">1.00&starf;</strong>
+                  </div>
+                  <input type="range" id="stdSlider" min="0.55" max="1.60" step="0.05" value="1.00" title="Double-click to reset spread" />
+                </div>
+              </div>
+
+              <button type="button" class="btn btn-ghost btn-sm btn-block" id="standardCurveParamsBtn">
+                Reset to Normal Curve
+              </button>
+              <div class="curve-equation" role="img" aria-label="Weight for rating r equals e to the negative one half times the square of r minus mu divided by sigma, divided by one plus e to the negative k times r minus mu. Probability equals that weight divided by the sum of weights for all half-star ratings.">
+                <span class="curve-equation-row">w(r) =
+                  <span class="curve-fraction">
+                    <span>e<sup>&minus;&frac12;((r &minus; &mu;)/&sigma;)<sup>2</sup></sup></span>
+                    <span>1 + e<sup>&minus;k(r &minus; &mu;)</sup></span>
+                  </span>
+                </span>
+                <span class="curve-equation-row">P(r) =
+                  <span class="curve-fraction">
+                    <span>w(r)</span>
+                    <span>&sum;<sub>s &isin; {0.5, 1, &hellip;, 5}</sub> w(s)</span>
+                  </span>
+                </span>
+              </div>
+            </section>
           </div>
 
-          <div class="params-card">
-            <div class="slider-group">
-              <div class="slider-label">
-                <label for="meanSlider">Center (&mu;)</label>
-                <strong id="meanValueDisplay">2.75&starf;</strong>
-              </div>
-              <input type="range" id="meanSlider" min="2.00" max="3.50" step="0.05" value="2.75" />
-            </div>
-
-            <div class="slider-group">
-              <div class="slider-label">
-                <label for="stdSlider">Spread (&sigma;)</label>
-                <strong id="stdValueDisplay">1.20&starf;</strong>
-              </div>
-              <input type="range" id="stdSlider" min="0.55" max="1.60" step="0.05" value="1.20" />
-            </div>
-
-            <button type="button" class="btn btn-ghost btn-sm btn-block" id="resetCurveParamsBtn">
-              Reset to Recommended (2.75&starf;, &sigma;=1.2)
-            </button>
-            <button type="button" class="btn btn-ghost btn-sm btn-block" id="standardCurveParamsBtn">
-              Reset to Standard Normal Distribution (2.75&starf;, &sigma;=1.0)
-            </button>
-
-            <div class="bucket-AllocationTableWrap">
-              <table class="mini-table" id="bucketAllocationTable">
-                <thead>
-                  <tr>
-                    <th>Tier</th>
-                    <th>Share</th>
-                    <th>Orig</th>
-                    <th>Normal</th>
-                  </tr>
-                </thead>
-                <tbody></tbody>
-              </table>
-            </div>
+          <div class="bucket-AllocationTableWrap">
+            <h3 class="curve-section-title">Rating tiers</h3>
+            <table class="mini-table" id="bucketAllocationTable">
+              <thead>
+                <tr>
+                  <th>Tier</th>
+                  <th>Share</th>
+                  <th>Orig</th>
+                  <th>Target</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+            <section class="curve-explanation" aria-labelledby="curveExplanationTitle">
+              <h3 class="curve-section-title" id="curveExplanationTitle">How the curve works</h3>
+              <p>This is a <strong>preference-weighted normal distribution</strong>. <strong>Center (&mu;)</strong> sets the middle of the starting curve, and <strong>Spread (&sigma;)</strong> makes it narrower or wider.</p>
+              <p>Increasing <strong>Good-movie bias (k)</strong> skews the curve above the center (&mu;), so your ratings reflect that you're more likely to watch movies of higher rating.</p>
+            </section>
           </div>
         </div>
 
         <!-- Filter Bar for Full Comparison Table -->
         <div class="toolbar step3-toolbar">
           <div class="step3-filters">
-            <label class="toggle-switch changed-only-toggle" title="Show only films whose normal-curve rating differs from your current Letterboxd rating">
+            <label class="toggle-switch changed-only-toggle" title="Show only films whose target rating differs from your current Letterboxd rating">
               <input type="checkbox" id="step3OnlyChangedToggle" />
               <span>Only Changed Ratings</span>
             </label>
@@ -573,14 +604,13 @@
             <table class="comparison-table">
               <thead>
                 <tr>
-                  <th>Final Rank</th>
+                  <th><span class="comparison-desktop-label">Final </span>Rank</th>
                   <th>Percentile</th>
                   <th>Movie</th>
-                  <th>Original Rating</th>
-                  <th>Normal-Curve Rating</th>
+                  <th>Original<span class="comparison-desktop-label"> Rating</span></th>
+                  <th>Target<span class="comparison-desktop-label"> Rating</span></th>
                   <th>Rating Delta (&Delta;)</th>
                   <th>Continuous Score</th>
-                  <th>Z-Score</th>
                 </tr>
               </thead>
               <tbody id="normalTableBody"></tbody>
@@ -592,6 +622,6 @@
   </main>
 
   <script src="/tournament.js?v=3"></script>
-  <script src="/app.js?v=65"></script>
+  <script src="/app.js?v=86"></script>
 </body>
 </html>

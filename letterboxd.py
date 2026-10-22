@@ -1,7 +1,8 @@
-"""Letterboxd scraper, CSV importer/exporter, and Normal Curve rating engine."""
+"""Letterboxd scraper, CSV importer/exporter, and rating curve engine."""
 
 from __future__ import annotations
 
+import bisect
 import csv
 import http.cookiejar
 import io
@@ -22,7 +23,9 @@ import lxml.html
 
 MAX_FILMS_LIMIT = 10000
 MAX_PAGES_LIMIT = 139  # 139 * 72 = 10,008 films
-DEFAULT_STD_DEV = 1.2
+DEFAULT_STD_DEV = 1.0
+DEFAULT_MEAN = 2.75
+DEFAULT_BIAS = 0.0
 _THREAD_LOCAL = threading.local()
 
 # Slackbot & Discordbot run on AWS (same ASN as Vercel/Render) and are whitelisted
@@ -698,7 +701,7 @@ def sort_films_by_rating(
 
 
 # ---------------------------------------------------------------------------
-# Normal Distribution & Normal Curve Rating Assignment Engine
+# Preference-Weighted Normal Distribution & Rating Assignment Engine
 # ---------------------------------------------------------------------------
 
 def _norm_ppf(p: float) -> float:
@@ -756,36 +759,68 @@ def _norm_ppf(p: float) -> float:
     )
 
 
-def compute_bucket_probabilities(mean: float = 2.75, std_dev: float = DEFAULT_STD_DEV) -> dict[float, float]:
-    """Compute normalized Gaussian probabilities for each of the 10 star buckets (0.5..5.0)."""
-    sigma = max(0.25, min(2.5, float(std_dev)))
-    mu = max(0.5, min(5.0, float(mean)))
+def validate_curve_settings(mean: float, bias: float, std_dev: float) -> None:
+    if not all(math.isfinite(value) for value in (mean, bias, std_dev)):
+        raise ValueError("Center, good-movie bias and spread must be finite numbers.")
+    if not (2.0 <= mean <= 3.5 and 0.0 <= bias <= 3.0 and 0.55 <= std_dev <= 1.6):
+        raise ValueError("Center must be 2–3.5, bias 0–3 and spread 0.55–1.6.")
 
-    raw_weights = {
-        b: math.exp(-0.5 * ((b - mu) / sigma) ** 2)
-        for b in STAR_BUCKETS
-    }
-    total_w = sum(raw_weights.values()) or 1.0
-    return {b: raw_weights[b] / total_w for b in STAR_BUCKETS}
+
+def _curve_weight(rating: float, mean: float, bias: float, std_dev: float) -> float:
+    gaussian = math.exp(-0.5 * ((rating - mean) / std_dev) ** 2)
+    if bias == 0:
+        return gaussian
+    return gaussian / (1 + math.exp(-bias * (rating - mean)))
+
+
+def _weighted_quantile_grid(mean: float, bias: float, std_dev: float) -> tuple[float, float, list[float]]:
+    start = mean - 8 * std_dev
+    step = 16 * std_dev / 1024
+    cdf = [0.0]
+    previous = _curve_weight(start, mean, bias, std_dev)
+    for i in range(1, 1025):
+        current = _curve_weight(start + i * step, mean, bias, std_dev)
+        cdf.append(cdf[-1] + (previous + current) * step / 2)
+        previous = current
+    return start, step, cdf
+
+
+def _weighted_ppf(grid: tuple[float, float, list[float]], quantile: float) -> float:
+    start, step, cdf = grid
+    target = quantile * cdf[-1]
+    index = max(0, min(bisect.bisect_left(cdf, target) - 1, len(cdf) - 2))
+    fraction = (target - cdf[index]) / (cdf[index + 1] - cdf[index])
+    return start + (index + fraction) * step
+
+
+def compute_bucket_probabilities(
+    mean: float = DEFAULT_MEAN,
+    bias: float = DEFAULT_BIAS,
+    std_dev: float = DEFAULT_STD_DEV,
+) -> dict[float, float]:
+    """Weight the ten star buckets by normal density and preference for higher ratings."""
+    validate_curve_settings(mean, bias, std_dev)
+    weights = {rating: _curve_weight(rating, mean, bias, std_dev) for rating in STAR_BUCKETS}
+    total = sum(weights.values())
+    return {rating: weight / total for rating, weight in weights.items()}
 
 
 def allocate_bucket_counts(
     total_count: int,
-    mean: float = 2.75,
+    mean: float = DEFAULT_MEAN,
+    bias: float = DEFAULT_BIAS,
     std_dev: float = DEFAULT_STD_DEV,
 ) -> dict[float, int]:
     """Allocate integer movie counts across 0.5..5.0 star buckets summing to total_count.
 
-    When mean is symmetric (2.75), pairs (0.5, 5.0), (1.0, 4.5), etc. are allocated
-    symmetrically so the resulting normal curve is strictly symmetric.
+    At the unbiased default center, pairs are allocated symmetrically.
     """
     if total_count <= 0:
         return {b: 0 for b in STAR_BUCKETS}
 
-    probs = compute_bucket_probabilities(mean=mean, std_dev=std_dev)
+    probs = compute_bucket_probabilities(mean=mean, bias=bias, std_dev=std_dev)
 
-    # Symmetric pairing when mean is centered at 2.75
-    if abs(mean - 2.75) < 1e-6:
+    if bias == 0 and abs(mean - DEFAULT_MEAN) < 1e-9:
         pairs = [(0.5, 5.0), (1.0, 4.5), (1.5, 4.0), (2.0, 3.5), (2.5, 3.0)]
         pair_quotas = [probs[lo] * total_count for lo, _ in pairs]
         pair_floors = [int(math.floor(q)) for q in pair_quotas]
@@ -813,7 +848,7 @@ def allocate_bucket_counts(
             counts[3.0] += 1
         return {b: counts[b] for b in STAR_BUCKETS}
 
-    # General Largest Remainder (Hamilton) allocation for custom mean
+    # General Largest Remainder (Hamilton) allocation
     quotas = {b: probs[b] * total_count for b in STAR_BUCKETS}
     floors = {b: int(math.floor(quotas[b])) for b in STAR_BUCKETS}
     remainder = total_count - sum(floors.values())
@@ -831,13 +866,15 @@ def allocate_bucket_counts(
 
 def compute_normal_curve_assignments(
     sorted_films: list[dict[str, Any]],
-    mean: float = 2.75,
+    mean: float = DEFAULT_MEAN,
+    bias: float = DEFAULT_BIAS,
     std_dev: float = DEFAULT_STD_DEV,
 ) -> dict[str, Any]:
-    """Assign each film in final user-sorted order (best -> worst) to its 0.5..5.0★ normal-curve tier."""
+    """Assign each film in final user-sorted order to its 0.5..5.0★ target tier."""
     n = len(sorted_films)
-    probs = compute_bucket_probabilities(mean=mean, std_dev=std_dev)
-    bucket_counts = allocate_bucket_counts(n, mean=mean, std_dev=std_dev)
+    probs = compute_bucket_probabilities(mean=mean, bias=bias, std_dev=std_dev)
+    bucket_counts = allocate_bucket_counts(n, mean=mean, bias=bias, std_dev=std_dev)
+    grid = _weighted_quantile_grid(mean, bias, std_dev) if bias else None
 
     # Expand buckets from highest (5.0) down to lowest (0.5) to match rank 1..N (best to worst)
     tier_sequence: list[float] = []
@@ -864,7 +901,9 @@ def compute_normal_curve_assignments(
         # Midpoint quantile from bottom (0) to top (1)
         quantile = (n - rank + 0.5) / n if n > 0 else 0.5
         z_score = _norm_ppf(quantile)
-        raw_continuous = max(0.5, min(5.0, mean + z_score * std_dev))
+        raw_continuous = max(0.5, min(5.0, (
+            _weighted_ppf(grid, quantile) if grid else mean + z_score * std_dev
+        )))
         percentile = round(((n - rank) / max(n - 1, 1)) * 100.0, 1) if n > 1 else 100.0
 
         orig = film.get("original_rating")
@@ -940,7 +979,7 @@ def compute_normal_curve_assignments(
 
     return {
         "total_films": n,
-        "parameters": {"mean": mean, "std_dev": std_dev},
+        "parameters": {"mean": mean, "bias": bias, "std_dev": std_dev},
         "stats": {
             "mean_original": mean_orig,
             "mean_normal": mean_normal,
@@ -964,7 +1003,7 @@ def parse_letterboxd_csv(
     username: str = "csv_import",
     resolve_remote: bool = False,
 ) -> dict[str, Any]:
-    """Parse a Letterboxd ratings.csv, watched.csv, or exported normal-curve CSV into the standard payload."""
+    """Parse a Letterboxd ratings.csv, watched.csv, or exported rating-curve CSV."""
     reader = csv.DictReader(io.StringIO(csv_content))
     films: list[FilmEntry] = []
 
@@ -1073,7 +1112,7 @@ def parse_letterboxd_csv(
 
 
 def export_normal_curve_csv(enriched_films: list[dict[str, Any]]) -> str:
-    """Export normal-curve sorted films to a Letterboxd-compatible CSV (plus analysis columns)."""
+    """Export target-curve ratings with the existing Letterboxd-compatible CSV columns."""
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(

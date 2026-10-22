@@ -19,7 +19,14 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from letterboxd import normalize_username
+from letterboxd import (
+    DEFAULT_BIAS,
+    DEFAULT_MEAN,
+    DEFAULT_STD_DEV,
+    compute_bucket_probabilities,
+    compute_normal_curve_assignments,
+    normalize_username,
+)
 
 try:
     from vercel.blob import BlobNotFoundError
@@ -36,6 +43,32 @@ def _supported_session(session: dict[str, Any] | None, username: str) -> dict[st
     if session and "normal_curve" not in session:
         logger.warning("Ignoring old-format saved profile for %s; it must be re-synced", username)
         return None
+    if session and session.get("settings") is not None:
+        settings = session["settings"]
+        needs_migration = "bias" not in settings
+        if needs_migration:
+            settings["mean"] = DEFAULT_MEAN
+            settings["bias"] = DEFAULT_BIAS
+            settings["std_dev"] = DEFAULT_STD_DEV
+            settings.pop("alpha", None)
+            settings.pop("beta", None)
+        mean = float(settings["mean"])
+        bias = float(settings["bias"])
+        std_dev = float(settings.get("std_dev", DEFAULT_STD_DEV))
+        if bias > 3.0:
+            logger.info("Capping saved good-movie bias at 3 for %s", username)
+            settings["bias"] = bias = 3.0
+            needs_migration = True
+        probabilities = compute_bucket_probabilities(mean, bias, std_dev)
+        if needs_migration or any(
+            bucket["probability_pct"] != round(probabilities[float(bucket["rating"])] * 100, 2)
+            for bucket in session["normal_curve"].get("buckets", [])
+        ):
+            session["normal_curve"] = compute_normal_curve_assignments(
+                session["normal_curve"]["films"], mean=mean, bias=bias, std_dev=std_dev
+            )
+            save_user_session(username, session)
+            logger.info("Restored preference-weighted curve for saved profile %s", username)
     return session
 
 
