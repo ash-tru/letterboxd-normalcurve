@@ -2144,6 +2144,20 @@ kbd {
   background: var(--bg-elevated);
 }
 
+#normalTableContainer .comparison-row-actions {
+  white-space: nowrap;
+}
+
+#normalTableContainer .comparison-row-actions .btn,
+#normalTableContainer .comparison-mobile-actions .btn {
+  padding: 3px 6px;
+  font-size: 0.72rem;
+}
+
+.comparison-mobile-actions {
+  display: none;
+}
+
 /* Pointer Drag Ghost & Active Drag State */
 body.is-sorting-drag,
 body.is-sorting-drag * {
@@ -2952,9 +2966,16 @@ body.is-sorting-drag * {
     padding: 7px 4px;
   }
 
-  #normalTableContainer .comparison-table :is(th, td):is(:nth-child(2), :nth-child(6), :nth-child(7)),
+  #normalTableContainer .comparison-table :is(th, td):is(:nth-child(2), :nth-child(6), :nth-child(7), :nth-child(8)),
   #normalTableContainer .comparison-desktop-label {
     display: none;
+  }
+
+  #normalTableContainer .comparison-mobile-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    margin-top: 4px;
   }
 
   #normalTableContainer .comparison-table th:nth-child(1) { width: 12%; }
@@ -2967,7 +2988,7 @@ body.is-sorting-drag * {
     overflow-wrap: anywhere;
   }
 
-  #normalTableContainer .comparison-table td[colspan="7"] {
+  #normalTableContainer .comparison-table td[colspan="8"] {
     display: block;
     box-sizing: border-box;
     width: 100%;

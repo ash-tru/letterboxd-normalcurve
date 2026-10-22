@@ -1061,7 +1061,7 @@ function renderAddMovieMode() {
     const buckets = state.session.normal_curve.buckets;
     const filmCount = state.session.normal_curve.films.length;
     document.getElementById("profileSetupSummary").textContent =
-      `This shitty AI slop website shapes your star ratings into a math curve. Rank the ${filmCount} movies you've seen from #1 to #${filmCount}, and we redistribute them into star-rating buckets.`;
+      `This AI slop website shapes your star ratings into a math curve. Rank the ${filmCount} movies you've seen from #1 to #${filmCount}, and this site will redistribute them into star-rating buckets.`;
     document.getElementById("profileSetupChart").innerHTML =
       renderDistributionChart(buckets, state.session.normal_curve.parameters);
     battleCard.classList.add("hidden");
@@ -2477,7 +2477,7 @@ function renderStep3() {
 function renderNormalComparisonTable(filteredFilms) {
   const tbody = document.getElementById("normalTableBody");
   if (!filteredFilms.length) {
-    tbody.innerHTML = `<tr><td colspan="7" class="muted-meta">No matching films found.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="muted-meta">No matching films found.</td></tr>`;
     return;
   }
 
@@ -2485,8 +2485,12 @@ function renderNormalComparisonTable(filteredFilms) {
   const sliced = filteredFilms.slice(0, limit);
 
   let html = sliced
-    .map(
-      (f) => `
+    .map((f) => {
+      const actions = `
+        <button type="button" class="btn btn-ghost btn-sm" data-action="find-in-list" data-slug="${escapeHtml(f.slug)}" aria-label="Find ${escapeHtml(f.title)} in List Sorter">List</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-action="rate-vs-film" data-slug="${escapeHtml(f.slug)}" aria-label="Rate ${escapeHtml(f.title)} in Single Movie Rate">A vs B</button>
+      `;
+      return `
       <tr>
         <td><strong>#${f.final_rank}</strong></td>
         <td>Top ${(100 - f.percentile).toFixed(1)}%</td>
@@ -2494,21 +2498,22 @@ function renderNormalComparisonTable(filteredFilms) {
           <a href="${escapeHtml(f.letterboxd_uri)}" target="_blank" rel="noopener noreferrer" class="film-row-title">
             ${escapeHtml(f.title)} ${f.year ? `<span class="muted-meta">(${f.year})</span>` : ""} ${f.is_added ? '<span class="delta-pill delta-up">NEW</span>' : ""}
           </a>
+          <div class="comparison-mobile-actions">${actions}</div>
         </td>
         <td><span class="stars-orange">${escapeHtml(formatStars(f.original_rating))}</span></td>
         <td><strong class="stars-green">${escapeHtml(f.normal_stars)}</strong></td>
         <td>${formatDeltaBadge(f.rating_delta, f.original_rating)}</td>
         <td>${f.continuous_normal_score.toFixed(2)}★</td>
+        <td class="comparison-row-actions">${actions}</td>
       </tr>
-    `
-    )
+    `; })
     .join("");
 
   if (filteredFilms.length > limit) {
     const rem = filteredFilms.length - limit;
     html += `
       <tr>
-        <td colspan="7" style="text-align: center; padding: 12px;">
+        <td colspan="8" style="text-align: center; padding: 12px;">
           <button type="button" class="btn btn-secondary btn-sm" id="step3LoadMoreBtn">
             Show Next ${Math.min(500, rem)} (${rem} remaining)
           </button>
@@ -2535,6 +2540,23 @@ function renderNormalComparisonTable(filteredFilms) {
       state.step3RenderLimit = filteredFilms.length;
       renderNormalComparisonTable(filteredFilms);
     });
+  }
+}
+
+function openComparisonFilm(slug, action) {
+  const film = state.session?.normal_curve?.films.find((item) => item.slug === slug);
+  if (!film) {
+    showError("This movie is no longer in the current list.");
+    return;
+  }
+  switchStep("step2");
+  if (action === "find-in-list") {
+    setSortMode("list");
+    scrollToMovie(film);
+  } else if (action === "rate-vs-film") {
+    setSortMode("battle");
+    startBinarySearchForFilm(slug);
+    renderBattleArena();
   }
 }
 
@@ -2910,6 +2932,11 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("step3SearchInput").addEventListener("input", (e) => {
     state.step3Search = e.target.value;
     renderStep3();
+  });
+
+  document.getElementById("normalTableBody").addEventListener("click", (e) => {
+    const button = e.target.closest("button[data-action][data-slug]");
+    if (button) openComparisonFilm(button.dataset.slug, button.dataset.action);
   });
 
 });
